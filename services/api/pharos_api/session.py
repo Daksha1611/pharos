@@ -244,6 +244,41 @@ class Session:
     # solving
     # ------------------------------------------------------------------
 
+    def _release_pending(self) -> int:
+        """Un-dispatch anything committed at the current tick but not yet arrived.
+
+        Re-deciding is not the same as deciding again. When the operator moves
+        the equity control, or a bridge fails, or a hoax lands, the right
+        behaviour is to reconsider *this* moment - not to layer a second round
+        of commitments on top of the first.
+
+        Without this, dragging the equity slider twice dispatched twice: the
+        first solve committed the fleet, the second had almost nothing left,
+        and the plan appeared to collapse rather than rebalance. On stage that
+        reads as the system falling over at the exact moment it is supposed to
+        show its best trick.
+
+        Only jobs dispatched at the current clock and still in transit are
+        released. An asset that has already arrived has done the work, and a
+        rescue that already happened is not recallable.
+        """
+        keep, released = [], 0
+        for job in self.in_flight:
+            recallable = job.dispatched_min >= self.clock_min and job.arrive_min > self.clock_min
+            if not recallable:
+                keep.append(job)
+                continue
+            asset = next((a for a in self.assets if a.asset_id == job.asset_id), None)
+            if asset is not None:
+                asset.state = AssetState.IDLE
+                asset.lat, asset.lon = self.depot_of[job.asset_id]
+                self.free_at[job.asset_id] = self.clock_min
+            self.committed.discard(job.demand_id)
+            released += 1
+        self.in_flight = keep
+        self._cache_at = -1.0
+        return released
+
     def replan(self, reason: str = "") -> Plan:
         with self.lock:
             self._cache_at = -1.0
@@ -315,12 +350,17 @@ class Session:
         with self.lock:
             old = self.solver.equity_weight
             self.solver.equity_weight = max(0.0, min(1.0, float(weight)))
+            released = self._release_pending()
             self.audit.record(
                 actor=actor,
                 action="set_equity_weight",
                 entity_type="policy",
                 entity_id="equity",
-                evidence={"from": old, "to": self.solver.equity_weight},
+                evidence={
+                    "from": old,
+                    "to": self.solver.equity_weight,
+                    "assignments_recalled": released,
+                },
             )
             return self.replan(reason=f"equity weight {old:.2f} -> {self.solver.equity_weight:.2f}")
 
@@ -328,6 +368,7 @@ class Session:
         """Force intake confidence down, to demonstrate graceful degradation."""
         with self.lock:
             self.confidence_override = value
+            self._release_pending()
             self._event(
                 "confidence_override",
                 "intake confidence forced low" if value is not None else "confidence restored",
@@ -356,7 +397,12 @@ class Session:
             roads.disable_edges(self.rg, [edge])
             self.oracle.bump_road_version()
             lat, lon = self.rg.node_latlon(edge[0])
-            self._event("bridge_collapsed", "river crossing lost", {"lat": lat, "lon": lon})
+            released = self._release_pending()
+            self._event(
+                "bridge_collapsed",
+                f"river crossing lost; {released} in-transit task(s) reconsidered",
+                {"lat": lat, "lon": lon, "recalled": released},
+            )
             self.audit.record(
                 actor=actor,
                 action="bridge_collapsed",
@@ -371,7 +417,7 @@ class Session:
         """Red team. Injects fabricated traffic into the live intake."""
         with self.lock:
             added = redteam.inject(self.sensing, self.data, self.spec, self.now, kind)
-            self._cache_at = -1.0
+            self._release_pending()
             self._event("redteam", f"{kind}: {added['messages']} messages injected", added)
             self.audit.record(
                 actor=actor,

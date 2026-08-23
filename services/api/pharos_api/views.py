@@ -577,7 +577,14 @@ def suggestion_view(session) -> dict | None:
             for r in best.reasons
             if r.factor in ("urgency", "vulnerability", "reachability", "headcount")
         ],
-        "instead_of": alternative.value if alternative else None,
+        # When nothing was rejected, say so. "No other asset could reach this"
+        # is itself a strong statement, and a blank line where the reasoning
+        # should be reads as the system having no reasoning.
+        "instead_of": (
+            alternative.value
+            if alternative
+            else "No other available asset can reach this location over the current road state"
+        ),
         "zone_note": zone.value if zone else None,
         "mode": plan.mode.value,
         "solve_time_ms": round(plan.solve_time_ms, 1),
