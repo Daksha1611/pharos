@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-
 from pharos_core import NeedType
 
 

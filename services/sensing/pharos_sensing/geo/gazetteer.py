@@ -24,7 +24,11 @@ _PREFIX = [
     "Vaikom", "Aluva", "Cheranallur", "Kadamakkudy", "Paravur", "Chellanam",
     "Kumbalangi", "Mulavukad", "Varapuzha", "Nedumbassery", "Thrikkakara",
     "Elamkulam", "Kalamassery", "Perumbavoor", "Kothamangalam", "Piravom",
-    "Maradu", "Panangad", "Edappally", "Palluruthy",
+    "Maradu", "Panangad", "Edappally", "Palluruthy", "Njarakkal", "Vypin",
+    "Cherai", "Munambam", "Pallippuram", "Kuzhuppilly", "Ezhikkara",
+    "Chittattukara", "Karumalloor", "Alangad", "Kunnukara", "Kanjoor",
+    "Manjapra", "Sreemoolanagaram", "Choornikkara", "Vazhakkulam",
+    "Rayamangalam", "Keezhmad", "Puthenvelikkara", "Chendamangalam",
 ]
 _SUFFIX = [
     ("Panchayat Office", ["panchayat", "panchayath office", "panchayat ofc"]),
@@ -43,7 +47,23 @@ _SUFFIX = [
     ("Colony", ["colony", "housing colony"]),
     ("Padashekharam", ["padam", "paddy field", "field"]),
     ("Anganwadi", ["anganwadi", "balwadi"]),
+    ("Ration Shop", ["ration shop", "maveli store", "supply co"]),
+    ("Post Office", ["post office", "postal"]),
+    ("Village Office", ["village office", "village ofc"]),
+    ("Krishi Bhavan", ["krishi bhavan", "agri office"]),
+    ("Youth Club", ["youth club", "arts club", "reading room"]),
+    ("Petrol Pump", ["petrol pump", "fuel station", "bunk"]),
+    ("Pumping Station", ["pumping station", "pump house"]),
+    ("Sub Station", ["sub station", "kseb substation", "kseb"]),
+    ("Boat Club", ["boat club", "canoe club"]),
+    ("Rice Mill", ["rice mill", "arimill"]),
 ]
+
+# Districts really do carry qualified variants of the same base name. These
+# extend the name space so a dense gazetteer stays generatable without
+# repeating itself.
+_QUALIFIER = ["", "", "", "North", "South", "East", "West", "Old", "New",
+              "Ward 3", "Ward 7", "Ward 11", "Upper", "Lower"]
 
 
 # Bare place-words that name many locations in one district. Seeing one of
@@ -58,6 +78,9 @@ GENERIC_TERMS = frozenset(
         "anganwadi", "balwadi", "old mill", "mill compound", "dairy", "milma",
     }
 )
+
+
+_GENERIC_BY_LENGTH = sorted(GENERIC_TERMS, key=len, reverse=True)
 
 
 @dataclass
@@ -76,11 +99,20 @@ class GazetteerEntry:
 class Gazetteer:
     entries: list[GazetteerEntry] = field(default_factory=list)
     _lookup: dict[str, GazetteerEntry] = field(default_factory=dict, repr=False)
+    _by_token: dict[str, list[str]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self):
         self.reindex()
 
     def reindex(self) -> None:
+        """Build a token-inverted index over place names.
+
+        Scanning every name against every message is 600 regex searches per
+        message, which at 40,000 messages is the difference between the intake
+        keeping up and falling behind. Instead, index each name by its rarest
+        token: a message only tests the handful of names that share a word
+        with it.
+        """
         self._lookup = {}
         for e in self.entries:
             for n in e.all_names():
@@ -88,25 +120,50 @@ class Gazetteer:
         # Longest names first so "vaikom old mill" beats "old mill".
         self._sorted_keys = sorted(self._lookup, key=len, reverse=True)
 
+        counts: dict[str, int] = {}
+        for key in self._lookup:
+            for tok in key.split():
+                counts[tok] = counts.get(tok, 0) + 1
+
+        self._by_token: dict[str, list[str]] = {}
+        for key in self._sorted_keys:
+            toks = [t for t in key.split() if len(t) >= 4]
+            if not toks:
+                continue
+            rarest = min(toks, key=lambda t: (counts[t], -len(t)))
+            self._by_token.setdefault(rarest, []).append(key)
+
     def match(self, text: str) -> GazetteerEntry | None:
         """Most specific landmark named in the text, or None.
 
-        Longest name first, so "Vaikom Old Mill" beats a shorter alias that
-        happens to be a substring of it.
+        Longest candidate first, so "Vaikom Old Mill" beats a shorter alias
+        that happens to be a substring of it.
         """
         t = _norm(text)
-        for key in self._sorted_keys:
+        tokens = set(t.split())
+
+        candidates: set[str] = set()
+        for tok in tokens:
+            candidates.update(self._by_token.get(tok, ()))
+        if not candidates:
+            return None
+
+        for key in sorted(candidates, key=len, reverse=True):
             if len(key) < 6:
                 continue
-            if re.search(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", t):
+            # Every token of the name must be present before the substring
+            # check runs - a cheap filter that removes almost all the work.
+            if not set(key.split()) <= tokens:
+                continue
+            if f" {key} " in f" {t} ":
                 return self._lookup[key]
         return None
 
     def mentions_generic_place(self, text: str) -> str | None:
         """A place-word with no prefix. Good enough for a ward, not a pin."""
-        t = _norm(text)
-        for term in sorted(GENERIC_TERMS, key=len, reverse=True):
-            if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", t):
+        t = f" {_norm(text)} "
+        for term in _GENERIC_BY_LENGTH:
+            if f" {term} " in t:
                 return term
         return None
 
@@ -132,12 +189,29 @@ def build(centre: tuple[float, float], radius_km: float, count: int = 200, seed:
     entries: list[GazetteerEntry] = []
     used: set[str] = set()
 
+    capacity = len(_PREFIX) * len(_SUFFIX) * len(set(_QUALIFIER))
+    if count > capacity:
+        raise ValueError(
+            f"gazetteer of {count} entries exceeds the {capacity} distinct names this "
+            f"generator can produce; widen _PREFIX, _SUFFIX or _QUALIFIER"
+        )
+
+    attempts = 0
     while len(entries) < count:
+        attempts += 1
         prefix = rng.choice(_PREFIX)
         suffix, alias_stems = rng.choice(_SUFFIX)
-        name = f"{prefix} {suffix}"
+        qual = rng.choice(_QUALIFIER)
+        name = f"{prefix} {qual} {suffix}".replace("  ", " ").strip()
         if name in used:
-            continue
+            # Rejection sampling gets slow as the space fills. Past a sensible
+            # bound, walk the space deterministically instead of retrying.
+            if attempts > count * 12:
+                name = f"{prefix} {suffix} {len(entries) + 1}"
+                if name in used:
+                    continue
+            else:
+                continue
         used.add(name)
 
         # Uniform over the disc, not over (r, theta) - otherwise everything
@@ -149,7 +223,11 @@ def build(centre: tuple[float, float], radius_km: float, count: int = 200, seed:
         # Prefixed aliases only. A bare "panchayat office" names a dozen
         # places in one district; resolving it to a point would be inventing
         # precision, so it goes to GENERIC_TERMS and falls back to ward level.
-        aliases = [f"{prefix.lower()} {a}" for a in alias_stems]
+        stem = f"{prefix} {qual}".strip().lower()
+        aliases = [f"{stem} {a}" for a in alias_stems]
+        if qual:
+            # People drop the qualifier as often as they use it.
+            aliases += [f"{prefix.lower()} {a}" for a in alias_stems[:1]]
         entries.append(
             GazetteerEntry(
                 name=name,

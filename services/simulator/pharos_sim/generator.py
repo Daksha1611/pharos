@@ -262,6 +262,23 @@ def _generate_messages(spec: ScenarioSpec, truth: list[TruthDemand], rng: random
                 else f"{t.truth_id}-{r}" if rng.random() < 0.72 else f"relay-{rng.randrange(400)}"
             )
 
+            meta = {
+                "_truth_id": t.truth_id,
+                "_is_hoax": t.is_hoax,
+                "_mentioned_landmark": mentioned_landmark,
+                "language": lang,
+            }
+            # Voice and SMS channels carry a cell-tower region. It is worth a
+            # ward and nothing finer, which is exactly what the geo cascade
+            # will record.
+            if channel in (Channel.SMS, Channel.CALL_TRANSCRIPT) and rng.random() < 0.8:
+                spread = 2600.0 / 111_320.0
+                meta["sender_region"] = {
+                    "lat": round(t.lat + rng.gauss(0, spread), 5),
+                    "lon": round(t.lon + rng.gauss(0, spread), 5),
+                    "accuracy_m": 2600.0,
+                }
+
             messages.append(
                 MessageEnvelope(
                     message_id=mid,
@@ -270,12 +287,7 @@ def _generate_messages(spec: ScenarioSpec, truth: list[TruthDemand], rng: random
                     sender_hash=_hash(sender),
                     received_at=ts,
                     attached_geo=geo,
-                    channel_metadata={
-                        "_truth_id": t.truth_id,
-                        "_is_hoax": t.is_hoax,
-                        "_mentioned_landmark": mentioned_landmark,
-                        "language": lang,
-                    },
+                    channel_metadata=meta,
                 )
             )
             t.message_ids.append(mid)

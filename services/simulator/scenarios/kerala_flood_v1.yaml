@@ -22,7 +22,10 @@ region:
   centre: [9.9312, 76.2673]     # Ernakulam district, Kerala
   radius_km: 25
   h3_resolution: 8
-  gazetteer_entries: 200
+  # A 25km-radius district carries thousands of named places in OSM. 200 was
+  # far too sparse: 1,700 simultaneous emergencies over 200 landmarks put 8-9
+  # unrelated events on the same coordinate, which no gate can separate.
+  gazetteer_entries: 900
 
 population:
   affected: 40000
