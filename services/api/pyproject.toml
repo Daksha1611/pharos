@@ -1,0 +1,23 @@
+[project]
+name = "pharos-api"
+version = "0.1.0"
+description = "PHAROS operations API - HTTP, WebSocket, audit trail"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pharos-core", "pharos-allocator", "pharos-sensing", "pharos-sim",
+    "fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0",
+    "websockets>=12.0", "pyyaml>=6.0",
+]
+
+[tool.uv.sources]
+pharos-core = { workspace = true }
+pharos-allocator = { workspace = true }
+pharos-sensing = { workspace = true }
+pharos-sim = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pharos_api"]

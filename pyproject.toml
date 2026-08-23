@@ -1,0 +1,40 @@
+[project]
+name = "pharos"
+version = "0.1.0"
+description = "PHAROS - Prioritization and Hazard-Aware Resource Orchestration System"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pharos-core",
+    "pharos-allocator",
+    "pharos-sensing",
+    "pharos-sim",
+    "pharos-api",
+]
+
+[project.scripts]
+pharos = "pharos_sim.cli:main"
+
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+
+[tool.uv.sources]
+pharos-core = { workspace = true }
+pharos-allocator = { workspace = true }
+pharos-sensing = { workspace = true }
+pharos-sim = { workspace = true }
+pharos-api = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008", "UP042"]  # UP042: str+Enum kept over StrEnum for pydantic/JSON parity
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

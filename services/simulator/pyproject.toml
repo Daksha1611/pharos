@@ -1,0 +1,21 @@
+[project]
+name = "pharos-sim"
+version = "0.1.0"
+description = "PHAROS scenario generator, red-team harness and evaluation"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pharos-core", "pharos-allocator", "pharos-sensing",
+    "pyyaml>=6.0", "numpy>=1.26", "h3>=4.1",
+]
+
+[tool.uv.sources]
+pharos-core = { workspace = true }
+pharos-allocator = { workspace = true }
+pharos-sensing = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pharos_sim"]

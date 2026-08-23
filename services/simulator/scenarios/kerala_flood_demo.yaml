@@ -1,0 +1,69 @@
+# Demo scenario. Sized so the whole pipeline - intake through dispatch - runs
+# in seconds on a laptop with no network, and so the difference between
+# policies is visible rather than lost in the noise.
+#
+# Parameters are grounded in documented figures, not invented:
+#   duplicate_rate 0.25   Kerala 2018, keralarescue.in form submissions
+#   amplification         2021 India COVID and 2023 Turkiye social re-sharing
+#   language_mix          Indian crisis traffic is majority code-mixed or
+#                         Roman-script Hindi, not clean English
+#   geo_present_rate 0.35 only about a third of reports carry coordinates
+#   hoax_rate 0.03        fabricated dam alerts, phantom supply, scam leads
+
+name: kerala_flood_demo
+seed: 42
+duration_hours: 6
+replan_minutes: 15
+
+region:
+  centre: [9.9312, 76.2673]     # Ernakulam district, Kerala
+  radius_km: 25
+  h3_resolution: 8
+  gazetteer_entries: 200
+
+population:
+  affected: 40000
+
+messages:
+  total: 6000
+  arrival:
+    curve: lognormal
+    peak_hour: 2.0
+    sigma: 0.8
+  duplicate_rate: 0.25
+  amplification:
+    enabled: true
+    share_fraction: 0.55
+    mean_extra: 4.0
+  language_mix: { en: 0.45, hi: 0.25, mixed: 0.30 }
+  channel_mix:
+    chat: 0.34
+    social: 0.30
+    sms: 0.18
+    web_form: 0.10
+    call_transcript: 0.05
+    control_room: 0.03
+  typo_rate: 0.08
+  shorthand_rate: 0.15
+  geo_present_rate: 0.35
+  landmark_mention_rate: 0.55
+  hoax_rate: 0.03
+
+needs:
+  evacuation: 0.40
+  medical: 0.20
+  water: 0.15
+  food: 0.15
+  shelter: 0.10
+
+assets:
+  - { type: boat,      count: 12, capacity: 8,  speed_kmh: 15, depots: 3 }
+  - { type: ambulance, count: 6,  capacity: 2,  speed_kmh: 30, depots: 2 }
+  - { type: truck,     count: 8,  capacity: 40, speed_kmh: 25, depots: 2 }
+  # Verification assets. Cheap, non-physical, dispatched by the same solver.
+  - { type: operator,  count: 4,  capacity: 12, speed_kmh: 1,  depots: 1 }
+  - { type: volunteer, count: 6,  capacity: 8,  speed_kmh: 1,  depots: 1 }
+
+road_degradation:
+  - { at_hour: 1.5, disable_fraction: 0.15, mode: flood }
+  - { at_hour: 3.0, disable_fraction: 0.30, mode: flood }
