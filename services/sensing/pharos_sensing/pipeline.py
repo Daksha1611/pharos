@@ -20,6 +20,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import h3
 from pharos_core import (
     DemandRecord,
     FieldConfidence,
@@ -53,6 +54,7 @@ class SensingConfig:
 
     embedder: str | None = None
     dedupe: clustering.DedupeParams = field(default_factory=clustering.DedupeParams)
+    h3_resolution: int = 8
 
     @classmethod
     def ablation(cls, name: str, **kw) -> SensingConfig:
@@ -303,6 +305,13 @@ class SensingPipeline:
         lower, point, upper = headcount_interval(people, quantity_confidence)
 
         location = consensus([p.location for p in group])
+        # Stamped here, where the record is built, so every consumer has it.
+        # Assigning it afterwards left demands rebuilt by `snapshot()` with no
+        # zone at all, and the equity term silently pooled all of them into
+        # one bucket called "unzoned".
+        location.h3_cell = h3.latlng_to_cell(
+            location.lat, location.lon, self.config.h3_resolution
+        )
 
         first = min(p.envelope.received_at for p in group)
         last = max(p.envelope.received_at for p in group)

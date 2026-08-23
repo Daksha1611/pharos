@@ -379,6 +379,16 @@ def _equity_multiplier(d, zone_index: dict[str, float], config: SolverConfig) ->
 def _extract(plan, solver, x, y, by_id, assets, cm, config, weights, zone_index) -> None:
     asset_by_id = {a.asset_id: a for a in assets}
 
+    # Which assets could have served each demand at all. The justification's
+    # "alternatives" line is only honest if it names one of these.
+    eligible: dict[str, set[str]] = {}
+    for did, d in by_id.items():
+        eligible[did] = {
+            a.asset_id
+            for a in assets
+            if not a.is_verifier and _serves(a, d) and cm.get(a.asset_id, did) is not None
+        }
+
     for (did, aid), var in x.items():
         if not solver.Value(var):
             continue
@@ -394,7 +404,9 @@ def _extract(plan, solver, x, y, by_id, assets, cm, config, weights, zone_index)
                 travel_minutes=round(travel_min, 1),
                 people_committed=_capacity_load(d, config),
                 objective_value=round(_served_value(d, config, weights) - weights.time * travel_min, 2),
-                reasons=justify_assignment(d, a, cm, config, weights, zone_index),
+                reasons=justify_assignment(
+                    d, a, cm, config, weights, zone_index, eligible_assets=eligible.get(did)
+                ),
                 route=cm.route(aid, did, a.type),
             )
         )

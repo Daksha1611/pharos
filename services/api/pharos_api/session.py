@@ -26,6 +26,7 @@ from pharos_allocator.solver import solve
 from pharos_allocator.zones import assign_cells
 from pharos_core import Asset, AssetState, DemandRecord, DemandStatus, Plan, TaskKind
 from pharos_sensing.pipeline import SensingConfig, SensingPipeline
+from pharos_sensing.triage.calibration import headcount_interval
 from pharos_sim import fleet, generator, redteam, spec
 from pharos_sim.dispatch import ESCALATION_PER_HOUR, MAX_ESCALATION, STALE_AFTER_MINUTES
 
@@ -206,9 +207,15 @@ class Session:
             elif d.demand_id in self.committed:
                 d.status = DemandStatus.ASSIGNED
             elif d.demand_id in self.verified:
+                # A verification task came back. That is exactly what it was
+                # dispatched to do: narrow the interval. Raising confidence
+                # without narrowing the range would leave the panel claiming
+                # 0.95 certainty next to a spread of a hundred people.
                 d.status = DemandStatus.VERIFYING
                 d.quantity_confidence = min(0.95, d.quantity_confidence + 0.30)
                 d.trust_score = min(1.0, d.trust_score + 0.25)
+                lo, point, hi = headcount_interval(d.need.people, d.quantity_confidence)
+                d.need.people_lower, d.need.people, d.need.people_upper = lo, point, hi
 
             if self.confidence_override is not None:
                 # Demo control: force the sensing layer's confidence down so the

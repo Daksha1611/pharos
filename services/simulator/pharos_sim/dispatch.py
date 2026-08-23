@@ -34,6 +34,7 @@ from pharos_allocator.costmatrix import RouteOracle
 from pharos_allocator.objective import SolverConfig, Weights
 from pharos_allocator.solver import solve as cpsat_solve
 from pharos_core import Asset, AssetState, DemandRecord, DemandStatus, Plan, TaskKind
+from pharos_sensing.triage.calibration import headcount_interval
 
 from . import baselines, fleet
 from .metrics import ServedRecord
@@ -192,9 +193,8 @@ def run(
                 # now compete for a physical asset on better evidence.
                 d.quantity_confidence = min(0.95, d.quantity_confidence + 0.30)
                 d.trust_score = min(1.0, d.trust_score + 0.25)
-                lo = d.need.people_lower
-                d.need.people_lower = min(d.need.people, max(lo, int(d.need.people * 0.9)))
-                d.need.people_upper = max(d.need.people, int(d.need.people * 1.1))
+                lo, point, hi = headcount_interval(d.need.people, d.quantity_confidence)
+                d.need.people_lower, d.need.people, d.need.people_upper = lo, point, hi
             # -- 4. escalation ----------------------------------------------
             if cfg.enable_escalation:
                 waited_h = d.age_minutes(now) / 60.0

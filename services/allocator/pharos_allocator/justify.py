@@ -13,7 +13,14 @@ from .objective import SolverConfig, Weights, demand_unit_value
 
 
 def justify_assignment(
-    d, a, cm, config: SolverConfig, w: Weights, zone_index: dict, kind=TaskKind.RESCUE
+    d,
+    a,
+    cm,
+    config: SolverConfig,
+    w: Weights,
+    zone_index: dict,
+    kind=TaskKind.RESCUE,
+    eligible_assets: set[str] | None = None,
 ) -> list[Reason]:
     travel_min = (cm.get(a.asset_id, d.demand_id) or 0.0) / 60.0
     reasons: list[Reason] = []
@@ -117,18 +124,28 @@ def justify_assignment(
                 )
             )
 
-    alt = _alternative(d, a, cm, travel_min)
+    alt = _alternative(d, a, cm, travel_min, eligible=eligible_assets)
     if alt:
         reasons.append(alt)
     return reasons
 
 
-def _alternative(d, chosen, cm, chosen_min: float) -> Reason | None:
-    """Name the runner-up and why it lost. This is the trust-building line."""
+def _alternative(d, chosen, cm, chosen_min: float, eligible: set[str] | None = None) -> Reason | None:
+    """Name the runner-up and why it lost. This is the trust-building line.
+
+    Only assets that could actually have taken this job. A verification
+    operator is three minutes from everything because a phone call costs the
+    same from anywhere, and a boat cannot deliver drinking water - listing
+    either as the asset that "was closer" is nonsense to an operator and costs
+    exactly the trust this panel exists to build.
+    """
     others = sorted(
         (t / 60.0, aid)
         for aid, row in cm.cost.items()
-        if aid != chosen.asset_id and (t := row.get(d.demand_id)) is not None
+        if aid != chosen.asset_id
+        and (t := row.get(d.demand_id)) is not None
+        and not _is_verifier_id(aid)
+        and (eligible is None or aid in eligible)
     )
     if not others:
         return None
@@ -144,11 +161,29 @@ def _alternative(d, chosen, cm, chosen_min: float) -> Reason | None:
     )
 
 
+VERIFIER_PREFIXES = ("operator-", "volunteer-")
+
+
+def _is_verifier_id(asset_id: str) -> bool:
+    return asset_id.startswith(VERIFIER_PREFIXES)
+
+
 def explain_unserved(d, cm, assets, reserve_n: int = 0, config: SolverConfig | None = None):
     """Why this demand has no asset. Never leave it blank."""
     from pharos_core import UnservedDemand
 
-    aid, secs = cm.nearest_asset(d.demand_id)
+    # The nearest *physical* asset. Telling an operator that a phone line is
+    # three minutes from a stranded family is not an explanation.
+    physical = [
+        (t / 60.0, a)
+        for a, row in cm.cost.items()
+        if not _is_verifier_id(a) and (t := row.get(d.demand_id)) is not None
+    ]
+    if physical:
+        mins_, aid = min(physical)
+        secs = mins_ * 60.0
+    else:
+        aid, secs = None, None
 
     if aid is None:
         return UnservedDemand(
