@@ -9,7 +9,6 @@ rather than being quietly counted as a clustering failure.
 
 from pharos_sensing.dedupe.cluster import DedupeParams
 from pharos_sensing.pipeline import SensingConfig, SensingPipeline
-
 from pharos_sim import generator, metrics, spec
 
 GRID = [

@@ -147,21 +147,33 @@ def build(
     )
 
 
-def prune(cm: CostMatrix, demands, top_k: int = 10) -> CostMatrix:
-    """Keep only the nearest `top_k` assets per demand.
+def prune(cm: CostMatrix, demands, top_k: int = 10, verifier_ids=frozenset()) -> CostMatrix:
+    """Keep only the nearest `top_k` physical assets per demand.
 
     Every asset paired with every demand is how a CP-SAT model goes from 10
     seconds to 90. Pruning here costs almost nothing in solution quality - the
     eleventh-nearest boat was never going to win.
+
+    Verification assets are exempt and never pruned. Their cost is a flat
+    three minutes because a callback costs the same from anywhere, which makes
+    them the "nearest" asset to every demand in the district. Ranking them
+    against boats on travel time silently deleted the entire physical fleet
+    from the model and the solver spent a whole scenario dispatching nothing
+    but phone calls.
     """
     keep: set[tuple[str, str]] = set()
     for d in demands:
         cands = [
-            (t, aid) for aid, row in cm.cost.items() if (t := row.get(d.demand_id)) is not None
+            (t, aid)
+            for aid, row in cm.cost.items()
+            if aid not in verifier_ids and (t := row.get(d.demand_id)) is not None
         ]
         cands.sort()
         for _, aid in cands[:top_k]:
             keep.add((aid, d.demand_id))
+        for aid in verifier_ids:
+            if d.demand_id in cm.cost.get(aid, {}):
+                keep.add((aid, d.demand_id))
 
     pruned = {
         aid: {did: t for did, t in row.items() if (aid, did) in keep}
@@ -174,3 +186,85 @@ def prune(cm: CostMatrix, demands, top_k: int = 10) -> CostMatrix:
         rg=cm.rg,
         snapper=cm.snapper,
     )
+
+
+# --------------------------------------------------------------------------
+# incremental cost lookup for the rolling replan
+# --------------------------------------------------------------------------
+
+
+class RouteOracle:
+    """Caches shortest-path distances so a replan does not redo Dijkstra.
+
+    Assets stage from depots and return to them, so the set of sources is
+    small and stable: one Dijkstra per (asset type, depot node) per road
+    state, reused across every replan tick until the road changes.
+
+    `bump_road_version()` is the invalidation. Recomputing only what the change
+    touched is the difference between a replan that feels live and one that
+    feels dead - the operator is watching, and a full matrix rebuild over a
+    few thousand demands takes seconds.
+    """
+
+    def __init__(self, rg: RoadGraph, max_seconds: float = 4 * 3600.0):
+        self.rg = rg
+        self.snapper = Snapper(rg)
+        self.max_seconds = max_seconds
+        self.road_version = 0
+        self._dist: dict[tuple, dict[int, float]] = {}
+        self._node_of: dict[str, int] = {}
+
+    def bump_road_version(self) -> None:
+        self.road_version += 1
+        self._dist.clear()
+
+    def node_for(self, key: str, lat: float, lon: float) -> int:
+        node = self._node_of.get(key)
+        if node is None:
+            node = self.snapper.snap(lat, lon)
+            self._node_of[key] = node
+        return node
+
+    def _distances(self, asset_type: AssetType, source: int) -> dict[int, float]:
+        ck = (asset_type, source, self.road_version)
+        hit = self._dist.get(ck)
+        if hit is None:
+            try:
+                hit = nx.single_source_dijkstra_path_length(
+                    self.rg.G, source, cutoff=self.max_seconds, weight=_weight_fn(asset_type)
+                )
+            except nx.NodeNotFound:
+                hit = {}
+            self._dist[ck] = hit
+        return hit
+
+    def build(self, assets, demands, top_k: int | None = None) -> CostMatrix:
+        demand_node = {
+            d.demand_id: self.node_for(d.demand_id, d.location.lat, d.location.lon)
+            for d in demands
+        }
+        asset_node = {
+            a.asset_id: self.node_for(f"asset::{a.asset_id}", a.lat, a.lon) for a in assets
+        }
+
+        cost: dict[str, dict[str, float]] = {}
+        for a in assets:
+            if a.is_verifier:
+                cost[a.asset_id] = {d.demand_id: VERIFICATION_FIXED_COST_S for d in demands}
+                continue
+            dist = self._distances(a.type, asset_node[a.asset_id])
+            cost[a.asset_id] = {
+                did: dist[node] for did, node in demand_node.items() if node in dist
+            }
+
+        cm = CostMatrix(
+            cost=cost,
+            asset_node=asset_node,
+            demand_node=demand_node,
+            rg=self.rg,
+            snapper=self.snapper,
+        )
+        if not top_k:
+            return cm
+        verifiers = frozenset(a.asset_id for a in assets if a.is_verifier)
+        return prune(cm, demands, top_k, verifier_ids=verifiers)

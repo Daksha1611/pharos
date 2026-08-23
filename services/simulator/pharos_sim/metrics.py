@@ -82,6 +82,66 @@ def coverage(served: list[ServedRecord], truth_people: int) -> float:
     return round(min(1.0, _people_reached(served) / truth_people), 4)
 
 
+def urgent_coverage_within_window(served: list[ServedRecord], truth_index: dict) -> float:
+    """Coverage of the lives-at-risk subset, inside its window.
+
+    Raw headcount coverage is dominated by large water and food demands, which
+    are the cheapest people to reach per truck. It is the wrong number to lead
+    with: forty people who need drinking water in six hours and two people who
+    need an ambulance in one are not interchangeable, and a policy that maxes
+    raw coverage by serving the former is not doing better work.
+
+    This restricts to critical and moderate medical urgency - the demands where
+    lateness is not recoverable.
+    """
+    urgent = {
+        k: t
+        for k, t in truth_index.items()
+        if not t.is_hoax
+        and t.medical_urgency in (MedicalUrgency.CRITICAL, MedicalUrgency.MODERATE)
+    }
+    total = sum(t.people for t in urgent.values())
+    if total <= 0:
+        return 0.0
+    reached = 0
+    for s in served:
+        t = urgent.get(s.truth_id or "")
+        if t is None or s.kind != "rescue" or s.is_duplicate_visit:
+            continue
+        if s.arrived_at_min - _onset_minutes(t, truth_index) <= urgency_window(
+            t.need, t.medical_urgency
+        ):
+            reached += min(s.people_committed, t.people)
+    return round(min(1.0, reached / total), 4)
+
+
+def urgency_weighted_coverage(served: list[ServedRecord], truth_index: dict) -> float:
+    """Coverage with each person weighted by how urgent their need was.
+
+    This is the quantity the objective actually optimises, so it is the
+    quantity to compare policies on. Reported alongside raw coverage rather
+    than instead of it.
+    """
+    weight = {
+        MedicalUrgency.CRITICAL: 4.0,
+        MedicalUrgency.MODERATE: 2.2,
+        MedicalUrgency.MILD: 1.4,
+        MedicalUrgency.NONE: 1.0,
+    }
+    total = sum(
+        t.people * weight[t.medical_urgency] for t in truth_index.values() if not t.is_hoax
+    )
+    if total <= 0:
+        return 0.0
+    reached = 0.0
+    for s in served:
+        t = truth_index.get(s.truth_id or "")
+        if t is None or t.is_hoax or s.kind != "rescue" or s.is_duplicate_visit:
+            continue
+        reached += min(s.people_committed, t.people) * weight[t.medical_urgency]
+    return round(min(1.0, reached / total), 4)
+
+
 def coverage_within_window(served: list[ServedRecord], truth_index: dict) -> float:
     """Fraction of real demand reached inside its urgency window.
 
@@ -104,10 +164,34 @@ def coverage_within_window(served: list[ServedRecord], truth_index: dict) -> flo
     return round(min(1.0, in_time / total), 4)
 
 
+def zones_reached_fraction(served: list[ServedRecord], truth_index: dict) -> float:
+    """Fraction of zones with demand that got anything at all.
+
+    Reported alongside worst-off-zone because at this scale the worst decile is
+    empty under every policy - several hundred zones carry demand and only a
+    few hundred sorties exist, so the bottom 10% is structurally zero and the
+    metric cannot distinguish anything. Breadth of reach can.
+    """
+    demanded: set[str] = set()
+    for t in truth_index.values():
+        if not t.is_hoax and t.h3_cell:
+            demanded.add(t.h3_cell)
+    if not demanded:
+        return 0.0
+    reached: set[str] = set()
+    for s in served:
+        t = truth_index.get(s.truth_id or "")
+        if t is None or t.is_hoax or s.kind != "rescue" or s.is_duplicate_visit:
+            continue
+        if t.h3_cell:
+            reached.add(t.h3_cell)
+    return round(len(reached & demanded) / len(demanded), 4)
+
+
 def worst_off_zone_coverage(
-    served: list[ServedRecord], truth_index: dict, percentile: float = 0.10
+    served: list[ServedRecord], truth_index: dict, percentile: float = 0.25
 ) -> float:
-    """Coverage of the worst-served decile of zones that had demand.
+    """Coverage of the worst-served quartile of zones that had demand.
 
     The equity metric. Averaged coverage hides a zone at zero; this does not.
     Computed over equal-area H3 hexes so it is a measurement rather than an
@@ -398,7 +482,10 @@ class MetricsRow:
     # operational
     coverage: float = 0.0
     coverage_within_window: float = 0.0
+    urgent_coverage_within_window: float = 0.0
+    urgency_weighted_coverage: float = 0.0
     worst_off_zone_coverage: float = 0.0
+    zones_reached_fraction: float = 0.0
     zone_gini: float = 0.0
     median_time_to_reach_min: float = 0.0
     median_time_to_first_assignment_min: float = 0.0
@@ -431,8 +518,8 @@ class MetricsRow:
 
     def headline(self) -> str:
         return (
-            f"{self.policy:22} cov={self.coverage:6.1%} "
-            f"in-window={self.coverage_within_window:6.1%} "
+            f"cov={self.coverage:6.1%} "
+            f"urgent={self.urgent_coverage_within_window:6.1%} "
             f"worst-zone={self.worst_off_zone_coverage:6.1%} "
             f"ttr={self.median_time_to_reach_min:6.1f}m "
             f"waste={self.wasted.get('wasted_sortie_fraction', 0):5.1%}"

@@ -10,7 +10,6 @@ from collections import Counter, defaultdict
 from pharos_sensing.dedupe import cluster as C
 from pharos_sensing.dedupe.embed import EmbedInput
 from pharos_sensing.pipeline import SensingConfig, SensingPipeline
-
 from pharos_sim import generator, spec
 
 d = generator.generate(spec.load("services/simulator/scenarios/kerala_flood_demo.yaml"))

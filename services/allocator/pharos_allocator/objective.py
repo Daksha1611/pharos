@@ -50,7 +50,13 @@ class Weights:
     vulnerability: dict = field(default_factory=lambda: dict(VULNERABILITY_BONUS))
 
     # Cost of a minute of travel, in units of one served person.
-    time: float = 0.06
+    #
+    # This is an opportunity cost, not a fuel cost: a sortie 60 minutes out
+    # spends the asset for two hours, which is a sortie it cannot fly
+    # somewhere else. Swept against the scenario - 0.06 was too myopic and
+    # flew long trips, 0.60 was too timid and left the far half of the district
+    # unserved.
+    time: float = 0.15
 
     # How much a verification task is worth relative to the uncertainty it
     # resolves. Resolving doubt on a high-potential-value demand is itself
@@ -86,6 +92,24 @@ class SolverConfig:
     time_limit_s: float = 10.0
     top_k_assets: int = 10
     workers: int = 8
+
+    # How many demands enter the model. An operator's screen shows a ranked
+    # queue, not every open record, and the solver works the same way: the
+    # 2,000th-ranked demand was never going to win a boat this round.
+    #
+    # This is a hard requirement, not an optimisation. Handing CP-SAT all 3,900
+    # open demands built a model with 39,000 booleans, blew the 10-second
+    # budget on every replan, and returned whatever feasible solution it
+    # happened to hold - which scored *worse* than greedy nearest-asset.
+    max_candidate_demands: int = 700
+
+    # The maximin equity term is the single most expensive thing in the model:
+    # one constraint per zone, all coupled through one variable. Aggregating to
+    # ward-scale hexes and watching only the busiest zones took a replan from
+    # 7.3 seconds to something an operator can move a slider against. The
+    # reported equity metric stays at full resolution over every zone.
+    equity_resolution: int = 7
+    equity_max_zones: int = 60
 
     @classmethod
     def full(cls, **kw) -> SolverConfig:

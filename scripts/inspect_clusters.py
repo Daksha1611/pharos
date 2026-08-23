@@ -4,7 +4,6 @@ from collections import Counter
 
 from pharos_sensing.dedupe.cluster import metres
 from pharos_sensing.pipeline import SensingConfig, SensingPipeline
-
 from pharos_sim import generator, spec
 
 d = generator.generate(spec.load("services/simulator/scenarios/kerala_flood_demo.yaml"))

@@ -1,9 +1,10 @@
 """Per-stage timing for the sensing pipeline."""
-import sys, time
+import sys
+import time
 from collections import Counter
 
 from pharos_sensing.dedupe import cluster as C
-from pharos_sensing.dedupe.embed import EmbedInput, get_embedder
+from pharos_sensing.dedupe.embed import EmbedInput
 from pharos_sensing.pipeline import SensingConfig, SensingPipeline
 from pharos_sim import generator, spec
 

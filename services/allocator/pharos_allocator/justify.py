@@ -99,14 +99,23 @@ def justify_assignment(
             f"(geo confidence {d.location.geo_confidence:.2f})",
         )
     )
-    zone_total = zone_index.get(d.location.h3_cell or "unzoned")
-    if zone_total is not None:
-        reasons.append(
-            Reason(
-                factor="zone_load",
-                value=f"hex {(d.location.h3_cell or '')[:9]} has {zone_total} people outstanding",
+    if config.use_equity and zone_index:
+        from .solver import _equity_zone
+
+        zone = _equity_zone(d, config)
+        deficit = zone_index.get(zone)
+        if deficit is not None:
+            reasons.append(
+                Reason(
+                    factor="zone_deficit",
+                    value=(
+                        f"zone {zone[:9]} is at {(1.0 - deficit):.0%} coverage; equity control "
+                        f"at {config.equity_weight:.2f} weights this demand up "
+                        f"{(config.equity_weight * deficit) * 100:.0f}%"
+                    ),
+                    contribution=round(deficit, 3),
+                )
             )
-        )
 
     alt = _alternative(d, a, cm, travel_min)
     if alt:

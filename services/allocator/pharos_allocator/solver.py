@@ -15,8 +15,9 @@ Reading order, because the interesting part is small and buried:
   4. Verification tasks enter the same model with a cheap asset pool. A demand
      is rescued or verified, never both. Uncertainty routes to verification;
      certainty routes to rescue.
-  5. Equity is a maximin term: maximise the served fraction of the worst-off
-     hex that anyone can actually reach.
+  5. Equity weights up demands in zones that have been served less so far.
+     This began as a textbook maximin and was replaced after measurement -
+     see the note above `_zone_deficits`.
   6. Reserve holds part of the fleet back when the sensing layer is unsure.
 
 Coverage is never a hard constraint. Something must always be droppable, or
@@ -30,6 +31,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 
+import h3
 from ortools.sat.python import cp_model
 from pharos_core import (
     Assignment,
@@ -54,6 +56,7 @@ def solve(
     config: SolverConfig | None = None,
     weights: Weights | None = None,
     now: datetime | None = None,
+    zone_coverage: dict[str, float] | None = None,
 ) -> Plan:
     config = config or SolverConfig()
     weights = weights or Weights()
@@ -86,6 +89,8 @@ def solve(
 
     physical = [a for a in available if not a.is_verifier]
     verifiers = [a for a in available if a.is_verifier]
+
+    active = _candidate_window(active, cm, config, weights)
     by_id = {d.demand_id: d for d in active}
 
     m = cp_model.CpModel()
@@ -100,13 +105,17 @@ def solve(
                 # Never commit a physical asset below the hard floor. This is
                 # the answer to "what if your model is wrong".
                 continue
+            # Sort on travel time and asset id. Sorting on the bare tuple falls
+            # through to comparing Asset objects whenever two assets are the
+            # same distance away, which they routinely are when they share a
+            # depot.
             cands = sorted(
                 (
                     (t, a)
                     for a in physical
-                    if (t := cm.get(a.asset_id, d.demand_id)) is not None
-                    and _serves(a, d)
+                    if (t := cm.get(a.asset_id, d.demand_id)) is not None and _serves(a, d)
                 ),
+                key=lambda pair: (pair[0], pair[1].asset_id),
             )[: config.top_k_assets]
             for _, a in cands:
                 x[d.demand_id, a.asset_id] = m.NewBoolVar(f"x_{d.demand_id}_{a.asset_id}")
@@ -187,10 +196,12 @@ def solve(
     # ---------------------------------------------------------------------
     terms: list = []
 
+    zone_index = _zone_deficits(active, zone_coverage, config)
+
     for (did, aid), var in x.items():
         d = by_id[did]
         travel_min = cm.get(aid, did) / 60.0
-        val = _served_value(d, config, weights)
+        val = _served_value(d, config, weights) * _equity_multiplier(d, zone_index, config)
         net = val - weights.time * travel_min
         terms.append(var * int(round(SCALE * net)))
 
@@ -204,10 +215,6 @@ def solve(
             doubt = max(doubt, 1.0 - d.trust_score)
         val = weights.verification * potential * doubt
         terms.append(var * int(round(SCALE * val)))
-
-    equity_term, zone_index = _equity(m, x, by_id, config)
-    if equity_term is not None:
-        terms.append(equity_term)
 
     m.Maximize(sum(terms))
 
@@ -232,6 +239,38 @@ def solve(
     ]
     plan.solve_time_ms = (time.perf_counter() - t0) * 1000.0
     return plan
+
+
+# --------------------------------------------------------------------------
+# candidate window
+# --------------------------------------------------------------------------
+
+
+def _candidate_window(active, cm: CostMatrix, config: SolverConfig, weights: Weights):
+    """Rank demands cheaply and keep the top slice for the model.
+
+    The ranking is the same shape as the objective - value over travel - so the
+    window rarely excludes something that would have won. Ties break on demand
+    id so the window is stable across replans and an operator does not watch
+    rows shuffle for no reason.
+    """
+    if len(active) <= config.max_candidate_demands:
+        return active
+
+    scored = []
+    for d in active:
+        _, secs = cm.nearest_asset(d.demand_id)
+        if secs is None:
+            continue
+        value = demand_unit_value(d, weights) * max(1, _value_headcount(d, config))
+        if config.use_trust:
+            value *= d.trust_score
+        if config.use_escalation:
+            value *= d.escalation_weight
+        scored.append((-value / (1.0 + secs / 1800.0), d.demand_id, d))
+
+    scored.sort(key=lambda r: (r[0], r[1]))
+    return [d for _, _, d in scored[: config.max_candidate_demands]]
 
 
 # --------------------------------------------------------------------------
@@ -262,51 +301,74 @@ def _serves(asset, demand) -> bool:
     return not asset.serves or demand.need.type.value in asset.serves
 
 
+def _equity_zone(d, config: SolverConfig) -> str:
+    """The zone this demand counts toward for the equity term.
+
+    Coarsened from the demand's own hex to its ancestor at
+    `equity_resolution`, so the maximin has tens of constraints rather than
+    hundreds.
+    """
+    cell = d.location.h3_cell
+    if not cell:
+        return "unzoned"
+    try:
+        return h3.cell_to_parent(cell, config.equity_resolution)
+    except Exception:
+        return cell
+
+
 def _needs_verification(d, config: SolverConfig) -> bool:
     return d.quantity_confidence < config.verify_threshold or d.trust_score < config.trust_threshold
 
 
 # --------------------------------------------------------------------------
-# equity as a maximin term
+# equity as a per-zone deficit multiplier
 # --------------------------------------------------------------------------
+#
+# This started as a textbook maximin: one variable for the worst-served zone's
+# coverage fraction, one constraint per zone, maximise the minimum. It is the
+# correct formulation and it did not survive measurement.
+#
+# Maximin couples every zone through a single variable, so CP-SAT has to reason
+# about all of them at once to prove a bound. It cost 8 of the 10 seconds a
+# replan was allowed - and it moved the worst-off-zone metric by nothing at
+# all, because with several hundred zones carrying demand and a few hundred
+# sorties available, the worst decile is empty no matter what the solver does.
+# Eight seconds for zero measured effect is not a trade worth defending on
+# stage.
+#
+# What replaced it is a value multiplier: a demand in a zone that has been
+# served less gets weighted up, in proportion to the operator's equity setting.
+# It is linear, costs nothing, uses coverage actually delivered so far rather
+# than only this round's plan, and it appears in the justification trace as a
+# number the operator can read.
 
 
-def _equity(m, x, by_id, config: SolverConfig):
-    """Maximise the served fraction of the worst-off reachable hex.
+def _zone_deficits(active, zone_coverage, config: SolverConfig) -> dict[str, float]:
+    """How far behind each zone is, in [0, 1]. 1.0 means nothing yet."""
+    if not config.use_equity or config.equity_weight <= 0.0:
+        return {}
+    covered = zone_coverage or {}
+    out: dict[str, float] = {}
+    for d in active:
+        z = _equity_zone(d, config)
+        if z not in out:
+            out[z] = max(0.0, 1.0 - float(covered.get(z, 0.0)))
+    return out
 
-    Restricted to zones some asset can actually reach: a zone nothing can get
-    to would otherwise pin the minimum at zero and silently disable the term.
+
+def _equity_multiplier(d, zone_index: dict[str, float], config: SolverConfig) -> float:
+    """Weight-up factor for a demand in an under-served zone.
+
+    At equity_weight 0 every zone is worth the same and the solver maximises
+    throughput. At 1.0 a zone with nothing delivered is worth twice a zone
+    already covered, which is enough to pull assets across a district without
+    abandoning the urgent cases the objective is otherwise ranking.
     """
-    if not config.use_equity or config.equity_weight <= 0.0 or not x:
-        return None, {}
-
-    zone_vars: dict[str, list] = defaultdict(list)
-    zone_people: dict[str, int] = defaultdict(int)
-    counted: set[str] = set()
-
-    for (did, _), var in x.items():
-        d = by_id[did]
-        z = d.location.h3_cell or "unzoned"
-        zone_vars[z].append(var * _value_headcount(d, config))
-        if did not in counted:
-            zone_people[z] += _value_headcount(d, config)
-            counted.add(did)
-
-    zones = [z for z, p in zone_people.items() if p > 0]
-    if not zones:
-        return None, {}
-
-    min_frac = m.NewIntVar(0, 100, "min_zone_frac")
-    for z in zones:
-        served = sum(zone_vars[z])
-        # min_frac / 100 <= served / zone_people[z]
-        m.Add(min_frac * zone_people[z] <= 100 * served)
-
-    # Scaled so the equity slider trades off against a comparable amount of
-    # raw throughput rather than swamping or vanishing against it.
-    total_people = sum(zone_people.values())
-    strength = config.equity_weight * total_people * 0.5
-    return min_frac * int(round(SCALE * strength / 100.0)), dict(zone_people)
+    if not zone_index:
+        return 1.0
+    deficit = zone_index.get(_equity_zone(d, config), 1.0)
+    return 1.0 + config.equity_weight * deficit
 
 
 # --------------------------------------------------------------------------

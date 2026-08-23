@@ -59,13 +59,22 @@ needs:
   food: 0.15
   shelter: 0.10
 
+# Fleet size is chosen so that allocation decisions actually matter.
+#
+# At extreme scarcity every policy converges to the same bad outcome and at
+# abundance every policy converges to the same good one; neither regime
+# measures anything. A first pass with 26 assets against ~30,000 people in
+# need produced 2% coverage for every configuration, which told us nothing.
+#
+# These counts are also closer to reality: Kerala 2018 saw several hundred
+# fishing boats operating in a single taluk, not a dozen.
 assets:
-  - { type: boat,      count: 12, capacity: 8,  speed_kmh: 15, depots: 3 }
-  - { type: ambulance, count: 6,  capacity: 2,  speed_kmh: 30, depots: 2 }
-  - { type: truck,     count: 8,  capacity: 40, speed_kmh: 25, depots: 2 }
+  - { type: boat,      count: 60, capacity: 8,  speed_kmh: 15, depots: 5 }
+  - { type: ambulance, count: 20, capacity: 2,  speed_kmh: 30, depots: 3 }
+  - { type: truck,     count: 45, capacity: 40, speed_kmh: 25, depots: 4 }
   # Verification assets. Cheap, non-physical, dispatched by the same solver.
-  - { type: operator,  count: 4,  capacity: 12, speed_kmh: 1,  depots: 1 }
-  - { type: volunteer, count: 6,  capacity: 8,  speed_kmh: 1,  depots: 1 }
+  - { type: operator,  count: 8,  capacity: 12, speed_kmh: 1,  depots: 1 }
+  - { type: volunteer, count: 14, capacity: 8,  speed_kmh: 1,  depots: 1 }
 
 road_degradation:
   - { at_hour: 1.5, disable_fraction: 0.15, mode: flood }

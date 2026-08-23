@@ -38,7 +38,7 @@ from .normalize.language import detect
 from .normalize.text import Normalizer
 from .triage.calibration import Calibrator, headcount_interval
 from .triage.extract import Extraction, extract
-from .trust.score import ReportSignal
+from .trust.score import ReportSignal, decay_existing
 from .trust.score import score as trust_score
 
 
@@ -87,6 +87,10 @@ class SensingResult:
     clusters: list[list[int]]
     pipeline: SensingPipeline | None = field(default=None, repr=False)
 
+    # Per-cluster reconciliation cache, keyed by how many members were visible.
+    _cache: dict[int, tuple[int, DemandRecord]] = field(default_factory=dict, repr=False)
+    _arrival_order: list[list[int]] | None = field(default=None, repr=False)
+
     def cluster_of(self, message_id: str) -> int | None:
         for ci, members in enumerate(self.clusters):
             if any(self.processed[i].envelope.message_id == message_id for i in members):
@@ -110,18 +114,56 @@ class SensingResult:
         """
         if self.pipeline is None:
             raise RuntimeError("snapshot needs the pipeline that produced this result")
+
+        # Members sorted by arrival, once, so "what was visible at `now`" is a
+        # bisect rather than a scan of every member on every tick.
+        if self._arrival_order is None:
+            self._arrival_order = [
+                sorted(m, key=lambda i: self.processed[i].envelope.received_at)
+                for m in self.clusters
+            ]
+
         out: list[DemandRecord] = []
-        for ci, members in enumerate(self.clusters):
-            visible = [i for i in members if self.processed[i].envelope.received_at <= now]
-            if not visible:
+        for ci, members in enumerate(self._arrival_order):
+            n = _visible_count(members, self.processed, now)
+            if not n:
                 continue
-            rec = self.pipeline._reconcile(visible, self.processed, now)
-            # Stable identity across ticks, so the console and the audit trail
-            # follow one demand rather than seeing a new one every replan.
-            rec.demand_id = self.demands[ci].demand_id
-            rec.truth_id = self.demands[ci].truth_id
+
+            # A cluster whose visible members have not changed since the last
+            # tick only needs its trust re-decayed, not a full re-reconcile.
+            # Rebuilding every cluster on every replan cost 21 seconds a run.
+            cached = self._cache.get(ci)
+            if cached is not None and cached[0] == n:
+                rec = cached[1].model_copy(deep=True)
+                if self.pipeline.config.enable_trust and self.pipeline.config.enable_freshness_decay:
+                    rec.trust_score = decay_existing(
+                        cached[1].trust_score, rec.staleness_minutes(now)
+                    )
+            else:
+                rec = self.pipeline._reconcile(members[:n], self.processed, now)
+                # Stable identity across ticks, so the console and the audit
+                # trail follow one demand rather than a new one every replan.
+                rec.demand_id = self.demands[ci].demand_id
+                rec.truth_id = self.demands[ci].truth_id
+                self._cache[ci] = (n, rec.model_copy(deep=True))
             out.append(rec)
         return out
+
+
+def _visible_count(members_sorted, processed, now) -> int:
+    """How many of this cluster's messages had arrived by `now`.
+
+    Members are pre-sorted by arrival, so this is a bisect over their
+    timestamps rather than a scan.
+    """
+    lo, hi = 0, len(members_sorted)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if processed[members_sorted[mid]].envelope.received_at <= now:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
 
 
 class SensingPipeline:
