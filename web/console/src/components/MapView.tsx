@@ -18,7 +18,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
 import type { Asset, AssetView, Demand, Plan, Roads, Zone } from "../api";
-import { URGENCY_COLOR } from "../api";
+import { MAP, URGENCY } from "../theme";
 
 interface Props {
   centre: [number, number];
@@ -32,12 +32,36 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-const BLANK_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {},
-  layers: [{ id: "bg", type: "background", paint: { "background-color": "#080b11" } }],
-  glyphs: undefined,
-};
+/**
+ * A light basemap with no tile server.
+ *
+ * The brief asked for OpenStreetMap or CartoDB Positron. Both are HTTP calls to
+ * a tile host, and this demo has a hard rule that nothing may require the
+ * network - a grey rectangle where the map should be is not a risk worth
+ * running on stage. So the Positron *look* is reproduced from geometry we
+ * generate locally: near-white ground, soft grey roads, muted blue water.
+ *
+ * Set VITE_PHAROS_TILES to a raster tile URL template to use real tiles where
+ * connectivity is known to be good.
+ */
+const TILE_URL = import.meta.env.VITE_PHAROS_TILES as string | undefined;
+
+const LIGHT_STYLE: maplibregl.StyleSpecification = TILE_URL
+  ? {
+      version: 8,
+      sources: {
+        base: { type: "raster", tiles: [TILE_URL], tileSize: 256, attribution: "© OpenStreetMap" },
+      },
+      layers: [
+        { id: "bg", type: "background", paint: { "background-color": MAP.background } },
+        { id: "base", type: "raster", source: "base" },
+      ],
+    }
+  : {
+      version: 8,
+      sources: {},
+      layers: [{ id: "bg", type: "background", paint: { "background-color": MAP.background } }],
+    };
 
 export function MapView(props: Props) {
   const holder = useRef<HTMLDivElement>(null);
@@ -49,7 +73,7 @@ export function MapView(props: Props) {
     if (!holder.current || map.current) return;
     const m = new maplibregl.Map({
       container: holder.current,
-      style: BLANK_STYLE,
+      style: LIGHT_STYLE,
       center: [props.centre[1], props.centre[0]],
       zoom: 9.6,
       attributionControl: false,
@@ -171,6 +195,7 @@ function demandFeatures(demands: Demand[], selected: string | null) {
   for (const d of demands) {
     const props = {
       demand_id: d.demand_id,
+      band: d.urgency_band,
       urgency: d.urgency,
       need: d.need,
       people: d.people,
@@ -248,16 +273,16 @@ function addLayers(m: maplibregl.Map) {
     paint: {
       "fill-color": [
         "interpolate", ["linear"], ["get", "coverage"],
-        0, "#ff5a5f", 0.35, "#ff9f43", 0.7, "#ffd166", 1, "#4dd4ac",
+        0, MAP.zoneLow, 0.5, MAP.zoneMid, 1, MAP.zoneHigh,
       ],
-      "fill-opacity": 0.16,
+      "fill-opacity": 0.55,
     },
   });
   m.addLayer({
     id: "zones-line",
     type: "line",
     source: "zones",
-    paint: { "line-color": "#36415a", "line-width": 0.5, "line-opacity": 0.5 },
+    paint: { "line-color": "#94a3b8", "line-width": 0.6, "line-opacity": 0.5 },
   });
 
   // --- water and roads ---------------------------------------------------
@@ -265,25 +290,25 @@ function addLayers(m: maplibregl.Map) {
     id: "river-line",
     type: "line",
     source: "river",
-    paint: { "line-color": "#1b3b6f", "line-width": 5, "line-opacity": 0.85 },
+    paint: { "line-color": MAP.water, "line-width": 6, "line-opacity": 0.9 },
   });
   m.addLayer({
     id: "roads-open-line",
     type: "line",
     source: "roads-open",
-    paint: { "line-color": "#2b3448", "line-width": 1.1 },
+    paint: { "line-color": MAP.roadOpen, "line-width": 1.2 },
   });
   m.addLayer({
     id: "roads-flooded-line",
     type: "line",
     source: "roads-flooded",
-    paint: { "line-color": "#c96a1f", "line-width": 1.8, "line-opacity": 0.9 },
+    paint: { "line-color": MAP.roadFlooded, "line-width": 2, "line-opacity": 0.95 },
   });
   m.addLayer({
     id: "roads-disabled-line",
     type: "line",
     source: "roads-disabled",
-    paint: { "line-color": "#ff3b3b", "line-width": 2.6, "line-dasharray": [2, 1.5] },
+    paint: { "line-color": MAP.roadDisabled, "line-width": 2.8, "line-dasharray": [2, 1.5] },
   });
   m.addLayer({
     id: "bridge-dots",
@@ -291,9 +316,9 @@ function addLayers(m: maplibregl.Map) {
     source: "bridges",
     paint: {
       "circle-radius": 5,
-      "circle-color": ["case", ["get", "standing"], "#5aa9ff", "#ff3b3b"],
+      "circle-color": ["case", ["get", "standing"], MAP.waterLine, MAP.roadDisabled],
       "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#0a0e14",
+      "circle-stroke-color": "#ffffff",
     },
   });
 
@@ -302,7 +327,7 @@ function addLayers(m: maplibregl.Map) {
     id: "route-lines",
     type: "line",
     source: "routes",
-    paint: { "line-color": "#5aa9ff", "line-width": 1.6, "line-opacity": 0.55 },
+    paint: { "line-color": MAP.route, "line-width": 1.8, "line-opacity": 0.5 },
   });
 
   m.addLayer({
@@ -311,9 +336,9 @@ function addLayers(m: maplibregl.Map) {
     source: "depots",
     paint: {
       "circle-radius": 4,
-      "circle-color": "#0a0e14",
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#7b8aa8",
+      "circle-color": "#ffffff",
+      "circle-stroke-width": 1.6,
+      "circle-stroke-color": MAP.depot,
     },
   });
 
@@ -327,10 +352,10 @@ function addLayers(m: maplibregl.Map) {
       // scale rather than shrinking into something pin-like.
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 10, 12, 46],
       "circle-color": urgencyColour(),
-      "circle-opacity": 0.1,
-      "circle-stroke-width": 1,
+      "circle-opacity": 0.12,
+      "circle-stroke-width": 1.2,
       "circle-stroke-color": urgencyColour(),
-      "circle-stroke-opacity": 0.45,
+      "circle-stroke-opacity": 0.5,
     },
   });
   m.addLayer({
@@ -340,10 +365,10 @@ function addLayers(m: maplibregl.Map) {
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 4, 12, 16],
       "circle-color": urgencyColour(),
-      "circle-opacity": 0.22,
-      "circle-stroke-width": 1.2,
+      "circle-opacity": 0.2,
+      "circle-stroke-width": 1.4,
       "circle-stroke-color": urgencyColour(),
-      "circle-stroke-opacity": 0.75,
+      "circle-stroke-opacity": 0.8,
     },
   });
   m.addLayer({
@@ -351,13 +376,13 @@ function addLayers(m: maplibregl.Map) {
     type: "circle",
     source: "demand-pins",
     paint: {
-      "circle-radius": ["case", ["==", ["get", "selected"], 1], 9, 4.5],
+      "circle-radius": ["case", ["==", ["get", "selected"], 1], 9, 5],
       "circle-color": urgencyColour(),
-      // Trust fades a demand rather than hiding it. A low-trust report stays
-      // on the operator's screen; it just stops shouting.
-      "circle-opacity": ["max", 0.25, ["get", "trust"]],
-      "circle-stroke-width": ["case", ["==", ["get", "selected"], 1], 2.5, 0.8],
-      "circle-stroke-color": ["case", ["==", ["get", "selected"], 1], "#ffffff", "#0a0e14"],
+      // Trust fades a marker rather than hiding it. A low-trust report stays on
+      // the operator's screen; it just stops shouting.
+      "circle-opacity": ["max", 0.3, ["get", "trust"]],
+      "circle-stroke-width": ["case", ["==", ["get", "selected"], 1], 3, 1.4],
+      "circle-stroke-color": ["case", ["==", ["get", "selected"], 1], "#0f172a", "#ffffff"],
     },
   });
 
@@ -366,21 +391,22 @@ function addLayers(m: maplibregl.Map) {
     type: "circle",
     source: "assets",
     paint: {
-      "circle-radius": 4,
-      "circle-color": ["case", ["==", ["get", "busy"], 1], "#5aa9ff", "#7b8aa8"],
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "#0a0e14",
+      "circle-radius": 4.5,
+      "circle-color": ["case", ["==", ["get", "busy"], 1], MAP.assetBusy, MAP.asset],
+      "circle-stroke-width": 1.4,
+      "circle-stroke-color": "#ffffff",
     },
   });
 }
 
 function urgencyColour(): maplibregl.ExpressionSpecification {
+  // Banded to match the feed exactly, so a red pin and a "Critical" card are
+  // unambiguously the same thing.
   return [
     "match",
-    ["get", "urgency"],
-    "critical", URGENCY_COLOR.critical,
-    "moderate", URGENCY_COLOR.moderate,
-    "mild", URGENCY_COLOR.mild,
-    URGENCY_COLOR.none,
+    ["get", "band"],
+    "critical", URGENCY.critical.hex,
+    "moderate", URGENCY.moderate.hex,
+    URGENCY.low.hex,
   ] as maplibregl.ExpressionSpecification;
 }

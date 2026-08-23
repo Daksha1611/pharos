@@ -10,35 +10,41 @@
     margin: 0;
   }
   body {
-    background: #0a0e14;
-    color: #cbd5e1;
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f9fafb;
+    color: #1e293b;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
+
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
-    background: #0a0e14;
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #242d3f;
-    border-radius: 4px;
+    background: #d1d5db;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 6px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #36415a;
+    background: #9ca3af;
+    background-clip: content-box;
   }
-  /* The map draws its own geometry; MapLibre's default light chrome would
-     fight the control-room palette. */
+
   .maplibregl-ctrl-group {
-    background: #111721 !important;
-    border: 1px solid #242d3f !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05) !important;
   }
-  .maplibregl-ctrl-group button + button {
-    border-top: 1px solid #242d3f !important;
-  }
-  .maplibregl-ctrl button .maplibregl-ctrl-icon {
-    filter: invert(0.7);
+}
+
+@layer utilities {
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 }

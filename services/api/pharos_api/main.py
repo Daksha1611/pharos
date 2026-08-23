@@ -29,6 +29,7 @@ from .views import (
     metrics_view,
     plan_view,
     road_view,
+    suggestion_view,
     zone_view,
 )
 
@@ -170,6 +171,13 @@ def assets():
 def plan():
     _require_ready()
     return plan_view(session)
+
+
+@app.get("/api/suggestion")
+def suggestion():
+    """The single decision this replan most wants a human to look at."""
+    _require_ready()
+    return suggestion_view(session)
 
 
 @app.get("/api/metrics")

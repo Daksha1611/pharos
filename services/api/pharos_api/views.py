@@ -19,6 +19,44 @@ from pharos_allocator.zones import cell_boundary
 from pharos_core import DemandStatus, GeoResolution, TaskKind
 from pharos_sensing.dedupe.cluster import metres
 
+# Urgency as a 1-10 score, so the console can band it consistently and the
+# operator sees the same ordering the solver argues for. Computed here rather
+# than in the browser: two implementations of "how urgent is this" would drift
+# apart within a week.
+URGENCY_BASE = {"critical": 9.0, "moderate": 6.5, "mild": 4.5, "none": 3.0}
+NEED_URGENCY_FLOOR = {
+    "evacuation": 5.0,
+    "medical": 5.5,
+    "missing_person": 5.0,
+    "water": 3.5,
+    "food": 2.5,
+    "shelter": 3.0,
+    "sanitation": 2.0,
+    "infrastructure": 2.0,
+}
+
+
+def urgency_score(d) -> float:
+    """1-10. Bands: 8-10 critical, 4-7 moderate, 1-3 low."""
+    base = max(
+        URGENCY_BASE.get(d.need.medical_urgency.value, 3.0),
+        NEED_URGENCY_FLOOR.get(d.need.type.value, 2.0),
+    )
+    # Vulnerability and time waiting both raise urgency; neither can push a
+    # low-severity request into the critical band on its own.
+    base += min(1.2, 0.4 * len(d.need.vulnerability_flags))
+    base += min(1.5, (d.escalation_weight - 1.0) * 1.2)
+    return round(max(1.0, min(10.0, base)), 1)
+
+
+def urgency_band(score: float) -> str:
+    if score >= 8.0:
+        return "critical"
+    if score >= 4.0:
+        return "moderate"
+    return "low"
+
+
 # How the map is allowed to draw a demand, by how well we actually located it.
 RENDER_BY_RESOLUTION = {
     GeoResolution.POINT: "pin",
@@ -90,11 +128,14 @@ def _priority(d, session) -> float:
 
 def _demand_row(d, session) -> dict:
     assignment = _assignment_for(session, d.demand_id)
+    score = urgency_score(d)
     return {
         "demand_id": d.demand_id,
         "status": d.status.value,
         "need": d.need.type.value,
         "urgency": d.need.medical_urgency.value,
+        "urgency_score": score,
+        "urgency_band": urgency_band(score),
         "vulnerability": d.need.vulnerability_flags,
         # Never a bare number: the interval and its confidence travel together.
         "people": d.need.people,
@@ -467,3 +508,80 @@ def _histogram(values, bins: int = 10) -> list[dict]:
         n = sum(1 for v in values if lo <= v < hi or (i == bins - 1 and v == 1.0))
         out.append({"bin": f"{lo:.1f}", "lower": round(lo, 2), "count": n})
     return out
+
+
+# --------------------------------------------------------------------------
+# the headline recommendation
+# --------------------------------------------------------------------------
+
+
+def suggestion_view(session) -> dict | None:
+    """The one decision this replan most wants a human to look at.
+
+    An operations console that shows four hundred rows and no recommendation
+    has moved the triage problem rather than solved it. This surfaces the
+    single highest-value assignment the solver just made, in the language an
+    operator would use, with the runner-up it beat and the confidence it is
+    acting on - and leaves accepting or overriding it to the human.
+    """
+    plan = session.plan
+    if not plan or not plan.assignments:
+        return None
+
+    rescues = [a for a in plan.assignments if a.kind is TaskKind.RESCUE]
+    if not rescues:
+        return None
+
+    best = max(rescues, key=lambda a: a.objective_value)
+    demand = next((d for d in session.demands() if d.demand_id == best.demand_id), None)
+    if demand is None:
+        return None
+
+    asset = next((a for a in session.assets if a.asset_id == best.asset_id), None)
+    reasons = {r.factor: r for r in best.reasons}
+    score = urgency_score(demand)
+
+    alternative = reasons.get("alternatives")
+    zone = reasons.get("zone_deficit")
+
+    where = demand.location.method
+    if where.startswith("landmark:"):
+        where = where.split(":", 1)[1]
+    elif where.startswith("channel_geo"):
+        where = "reported coordinates"
+    elif where.startswith("sender_region"):
+        where = "sender's cell region"
+
+    return {
+        "assignment_id": best.assignment_id,
+        "demand_id": best.demand_id,
+        "asset_id": best.asset_id,
+        "asset_type": asset.type.value if asset else "asset",
+        "headline": (
+            f"Send {best.asset_id} to {demand.need.people_lower}–{demand.need.people_upper} "
+            f"people near {where}"
+        ),
+        "need": demand.need.type.value,
+        "urgency_score": score,
+        "urgency_band": urgency_band(score),
+        "travel_minutes": best.travel_minutes,
+        "people_committed": best.people_committed,
+        "people_lower": demand.need.people_lower,
+        "people_upper": demand.need.people_upper,
+        "quantity_confidence": demand.quantity_confidence,
+        "trust_score": demand.trust_score,
+        "duplicate_collapse_count": demand.duplicate_collapse_count,
+        "location": _location(demand),
+        "because": [
+            r.value
+            for r in best.reasons
+            if r.factor in ("urgency", "vulnerability", "reachability", "headcount")
+        ],
+        "instead_of": alternative.value if alternative else None,
+        "zone_note": zone.value if zone else None,
+        "mode": plan.mode.value,
+        "solve_time_ms": round(plan.solve_time_ms, 1),
+        "alternatives_considered": len(
+            [a for a in session.assets if not a.is_verifier and a.state.value == "idle"]
+        ),
+    }

@@ -53,11 +53,16 @@ export interface DemandLocation {
   render_as: RenderAs;
 }
 
+export type UrgencyBand = "critical" | "moderate" | "low";
+
 export interface Demand {
   demand_id: string;
   status: string;
   need: string;
   urgency: "none" | "mild" | "moderate" | "critical";
+  /** 1-10, computed server-side so the console and the solver cannot drift. */
+  urgency_score: number;
+  urgency_band: UrgencyBand;
   vulnerability: string[];
   people: number;
   people_lower: number;
@@ -174,6 +179,32 @@ export interface Plan {
   }[];
 }
 
+/** The one decision this replan most wants a human to look at. */
+export interface Suggestion {
+  assignment_id: string;
+  demand_id: string;
+  asset_id: string;
+  asset_type: string;
+  headline: string;
+  need: string;
+  urgency_score: number;
+  urgency_band: UrgencyBand;
+  travel_minutes: number;
+  people_committed: number;
+  people_lower: number;
+  people_upper: number;
+  quantity_confidence: number;
+  trust_score: number;
+  duplicate_collapse_count: number;
+  location: DemandLocation;
+  because: string[];
+  instead_of: string | null;
+  zone_note: string | null;
+  mode: string;
+  solve_time_ms: number;
+  alternatives_considered: number;
+}
+
 export interface Asset {
   asset_id: string;
   type: string;
@@ -270,6 +301,7 @@ export const api = {
   demands: (q: string) => get<DemandPage>(`/api/demands?${q}`),
   demand: (id: string) => get<DemandDetail>(`/api/demands/${id}`),
   plan: () => get<Plan>("/api/plan"),
+  suggestion: () => get<Suggestion | null>("/api/suggestion"),
   assets: () => get<AssetView>("/api/assets"),
   roads: () => get<Roads>("/api/roads"),
   zones: () => get<{ zones: Zone[]; count: number }>("/api/zones"),
@@ -286,39 +318,3 @@ export const api = {
     post<Status>(`/api/control/confidence${cap === null ? "" : `?cap=${cap}`}`),
   reset: () => post<Status>("/api/control/reset"),
 };
-
-// --------------------------------------------------------------------------
-// display helpers
-
-export const URGENCY_COLOR: Record<string, string> = {
-  critical: "#ff5a5f",
-  moderate: "#ff9f43",
-  mild: "#ffd166",
-  none: "#4dd4ac",
-};
-
-export const NEED_LABEL: Record<string, string> = {
-  evacuation: "Evacuation",
-  medical: "Medical",
-  water: "Water",
-  food: "Food",
-  shelter: "Shelter",
-  sanitation: "Sanitation",
-  missing_person: "Missing",
-  infrastructure: "Infrastructure",
-};
-
-/** What each resolution level entitles the map to draw. */
-export const RESOLUTION_NOTE: Record<string, string> = {
-  point: "GPS-accurate — drawn as a pin",
-  building: "Building-accurate — drawn as a pin",
-  street: "Street-level — drawn as a circle, not a pin",
-  ward: "Ward-level only — drawn as a hex",
-  unknown: "Not located — listed, never mapped",
-};
-
-export function clock(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return `T+${h}:${String(m).padStart(2, "0")}`;
-}

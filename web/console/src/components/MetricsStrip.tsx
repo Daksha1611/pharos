@@ -1,9 +1,9 @@
 /**
- * Live numbers, along the bottom of the map.
+ * Live numbers along the bottom.
  *
- * The two that matter for the pitch sit first: how many raw messages have been
- * ingested, and how many distinct demands they collapsed into. That difference
- * is the Kerala number, computed live rather than quoted from a slide.
+ * The two that carry the pitch sit first: how many raw messages have arrived,
+ * and how many distinct demands they collapsed into. That gap is the Kerala
+ * number, computed live rather than quoted from a slide.
  */
 
 import type { AssetView, Metrics, Plan } from "../api";
@@ -17,79 +17,85 @@ interface Props {
 
 export function MetricsStrip({ metrics, plan, assets, events }: Props) {
   const m = metrics;
-  const collapsed = m ? m.duplicates_collapsed : 0;
+  const physical = assets?.assets.filter((a) => !a.is_verifier) ?? [];
+  const committed = physical.filter((a) => a.state !== "idle").length;
+  const latest = events && events.length ? events[events.length - 1] : null;
 
   return (
-    <div className="flex items-stretch gap-px overflow-x-auto border-t border-ink-700 bg-ink-900">
+    <footer className="flex items-stretch gap-3 overflow-x-auto border-t border-gray-200 bg-white px-4 py-2">
       <Stat
-        label="messages in"
+        label="Messages ingested"
         value={m ? m.messages_ingested.toLocaleString() : "—"}
-        sub={m ? `of ${m.messages_total.toLocaleString()}` : ""}
+        sub={m ? `of ${m.messages_total.toLocaleString()} in scenario` : ""}
       />
+      <Divider />
       <Stat
-        label="demand records"
+        label="Demand records"
         value={m ? m.demand_records.toLocaleString() : "—"}
         sub={m ? `${m.collapse_ratio.toFixed(2)}× collapse` : ""}
-        tone="info"
+        accent="text-blue-700"
       />
       <Stat
-        label="duplicates removed"
-        value={collapsed.toLocaleString()}
-        sub="each one would have pulled an asset"
-        tone="good"
+        label="Duplicates removed"
+        value={m ? m.duplicates_collapsed.toLocaleString() : "—"}
+        sub="each would have pulled an asset"
+        accent="text-indigo-700"
       />
+      <Divider />
       <Stat
-        label="people outstanding"
+        label="People outstanding"
         value={m ? m.people_outstanding.toLocaleString() : "—"}
-        sub={m ? `${m.people_served.toLocaleString()} served` : ""}
+        sub={m ? `${m.people_served.toLocaleString()} reached` : ""}
       />
       <Stat
-        label="assets committed"
-        value={
-          assets
-            ? `${assets.assets.filter((a) => !a.is_verifier && a.state !== "idle").length}`
-            : "—"
+        label="Assets committed"
+        value={physical.length ? `${committed}/${physical.length}` : "—"}
+        sub={
+          m?.reserve && m.reserve.assets_held > 0
+            ? `${m.reserve.assets_held} held in reserve`
+            : "fleet fully available"
         }
-        sub={assets ? `of ${assets.assets.filter((a) => !a.is_verifier).length}` : ""}
       />
       <Stat
-        label="verification tasks"
+        label="Verification tasks"
         value={plan ? String(plan.counts.verification) : "—"}
         sub="uncertainty → callback"
-        tone="verify"
+        accent="text-slate-700"
       />
+      <Divider />
       <Stat
-        label="mean confidence"
+        label="Mean confidence"
         value={m ? m.mean_confidence.toFixed(2) : "—"}
-        sub={m ? `trust ${m.mean_trust.toFixed(2)}` : ""}
+        sub={m ? `mean trust ${m.mean_trust.toFixed(2)}` : ""}
       />
       <Stat
-        label="replan"
-        value={m ? `${Math.round(m.solve_ms_last)}ms` : "—"}
-        sub={m ? `${Math.round(m.solve_ms_mean)}ms mean` : ""}
+        label="Replan time"
+        value={m ? `${Math.round(m.solve_ms_last)} ms` : "—"}
+        sub={m ? `${Math.round(m.solve_ms_mean)} ms average` : ""}
       />
       <Stat
-        label="audit entries"
+        label="Audit entries"
         value={m ? m.audit_entries.toLocaleString() : "—"}
-        sub="every decision, immutable"
+        sub="immutable decision log"
       />
 
-      {/* --- most recent scenario event ---------------------------------- */}
-      <div className="flex min-w-[240px] flex-1 flex-col justify-center px-3 py-1.5">
-        <span className="text-[9px] uppercase tracking-wider text-slate-600">latest event</span>
-        {events && events.length > 0 ? (
-          <span className="truncate text-[11px] text-slate-300">
-            <span className="font-mono text-slate-600">
-              T+{Math.floor(events[events.length - 1].at_min / 60)}:
-              {String(Math.round(events[events.length - 1].at_min % 60)).padStart(2, "0")}
+      <div className="ml-auto flex min-w-[220px] flex-col justify-center border-l border-gray-200 pl-3">
+        <span className="text-[9px] font-medium uppercase tracking-wide text-slate-500">
+          Latest event
+        </span>
+        {latest ? (
+          <span className="truncate text-[11px] text-slate-700">
+            <span className="font-mono text-slate-400">
+              T+{Math.floor(latest.at_min / 60)}:
+              {String(Math.round(latest.at_min % 60)).padStart(2, "0")}
             </span>{" "}
-            {events[events.length - 1].message}
+            {latest.message}
           </span>
         ) : (
-          <span className="text-[11px] text-slate-600">nothing yet</span>
+          <span className="text-[11px] text-slate-400">Nothing yet</span>
         )}
       </div>
-    </div>
+    </footer>
   );
 }
 
@@ -97,24 +103,24 @@ function Stat({
   label,
   value,
   sub,
-  tone = "default",
+  accent = "text-slate-900",
 }: {
   label: string;
   value: string;
   sub?: string;
-  tone?: "default" | "info" | "good" | "verify";
+  accent?: string;
 }) {
-  const colour = {
-    default: "text-slate-200",
-    info: "text-signal-info",
-    good: "text-signal-low",
-    verify: "text-signal-verify",
-  }[tone];
   return (
-    <div className="min-w-[112px] shrink-0 bg-ink-800 px-3 py-1.5">
-      <div className="text-[9px] uppercase tracking-wider text-slate-600">{label}</div>
-      <div className={`font-mono text-sm tabular-nums ${colour}`}>{value}</div>
-      {sub && <div className="truncate text-[9px] text-slate-600">{sub}</div>}
+    <div className="min-w-[118px] shrink-0">
+      <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`font-mono text-base font-semibold leading-tight tabular-nums ${accent}`}>
+        {value}
+      </div>
+      {sub && <div className="truncate text-[9px] leading-tight text-slate-500">{sub}</div>}
     </div>
   );
+}
+
+function Divider() {
+  return <div className="w-px shrink-0 bg-gray-200" />;
 }
