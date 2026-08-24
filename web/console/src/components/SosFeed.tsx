@@ -14,6 +14,8 @@
  *             than only asserted in the pitch.
  */
 
+import { useEffect, useRef, useState } from "react";
+
 import type { Demand, DemandPage } from "../api";
 import { NEED_ICON, NEED_LABEL, RESOLUTION_SHORT, URGENCY, ago, trustStyle } from "../theme";
 
@@ -36,6 +38,56 @@ interface Props {
 
 export function SosFeed({ page, selected, onSelect, filters, setFilters }: Props) {
   const c = page?.counts;
+
+  // Which cards arrived on the last update, so they can pulse in rather than
+  // just appearing. This is the single visual signal that turns "a table
+  // with 488 rows" into "a feed you can watch fill up" - it is what the ask
+  // for visible message flow actually comes down to.
+  const seen = useRef<Set<string>>(new Set());
+  const initialized = useRef(false);
+  const prevTotal = useRef(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [justArrived, setJustArrived] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const ids = (page?.demands ?? []).map((d) => d.demand_id);
+    const total = page?.total_unfiltered ?? 0;
+
+    if (!initialized.current) {
+      // First paint: seed silently, nothing pulses on load.
+      seen.current = new Set(ids);
+      prevTotal.current = total;
+      initialized.current = true;
+      return;
+    }
+
+    if (total < prevTotal.current) {
+      // The underlying pool shrank - a reset, not new arrivals. Re-seed
+      // without animating so a fresh run does not pulse the whole feed.
+      seen.current = new Set(ids);
+      setJustArrived(new Set());
+      prevTotal.current = total;
+      return;
+    }
+
+    const arrivals = ids.filter((id) => !seen.current.has(id));
+    seen.current = new Set([...seen.current, ...ids]);
+    prevTotal.current = total;
+
+    if (arrivals.length) {
+      setJustArrived((prev) => new Set([...prev, ...arrivals]));
+      const t = setTimeout(() => {
+        setJustArrived((prev) => {
+          const next = new Set(prev);
+          for (const id of arrivals) next.delete(id);
+          return next;
+        });
+      }, 3200);
+      timers.current.push(t);
+    }
+  }, [page]);
+
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
   return (
     <section className="flex h-full flex-col border-r border-gray-200 bg-gray-50">
@@ -79,7 +131,13 @@ export function SosFeed({ page, selected, onSelect, filters, setFilters }: Props
           <p className="px-1 text-xs text-slate-500">No reports match this filter.</p>
         )}
         {page?.demands.map((d) => (
-          <Card key={d.demand_id} d={d} selected={d.demand_id === selected} onSelect={onSelect} />
+          <Card
+            key={d.demand_id}
+            d={d}
+            selected={d.demand_id === selected}
+            onSelect={onSelect}
+            justArrived={justArrived.has(d.demand_id)}
+          />
         ))}
       </div>
     </section>
@@ -92,10 +150,12 @@ function Card({
   d,
   selected,
   onSelect,
+  justArrived,
 }: {
   d: Demand;
   selected: boolean;
   onSelect: (id: string) => void;
+  justArrived: boolean;
 }) {
   const u = URGENCY[d.urgency_band];
   const t = trustStyle(d.trust_score);
@@ -105,7 +165,8 @@ function Card({
     <button
       onClick={() => onSelect(d.demand_id)}
       className={`w-full rounded-lg border bg-white p-3 text-left shadow-sm transition-all
-        hover:shadow-md ${selected ? "border-slate-700 ring-1 ring-slate-700" : "border-gray-200"}`}
+        hover:shadow-md ${selected ? "border-slate-700 ring-1 ring-slate-700" : "border-gray-200"}
+        ${justArrived ? "animate-card-arrive" : ""}`}
     >
       {/* --- urgency: colour AND label, never colour alone -------------- */}
       <div className="flex items-start gap-2">
@@ -123,6 +184,12 @@ function Card({
           {NEED_LABEL[d.need] ?? d.need}
         </span>
 
+        {justArrived && (
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            New
+          </span>
+        )}
         <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">
           {ago(d.staleness_minutes)}
         </span>

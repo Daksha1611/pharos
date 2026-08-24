@@ -19,6 +19,7 @@ import { MapView } from "./components/MapView";
 import { MetricsStrip } from "./components/MetricsStrip";
 import { ReallocationCard } from "./components/ReallocationCard";
 import { EMPTY_FILTERS, type Filters, SosFeed } from "./components/SosFeed";
+import { Toast, type ToastData, type ToastTone } from "./components/Toast";
 import { TopNav } from "./components/TopNav";
 import { RESOLUTION_SHORT } from "./theme";
 
@@ -28,6 +29,11 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [busy, setBusy] = useState<string | null>(null);
+  // Which control most recently completed, and what it says happened - the
+  // visible confirmation a judge can point at without hunting the map for
+  // the effect. justDone drives the button's flash; toast drives the banner.
+  const [justDone, setJustDone] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastData | null>(null);
   const [playing, setPlaying] = useState(false);
   const [showZones, setShowZones] = useState(false);
 
@@ -91,17 +97,37 @@ export default function App() {
   }, [ready, mode, invalidate]);
 
   // -- controls ------------------------------------------------------------
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const notify = useCallback((text: string, tone: ToastTone = "default") => {
+    clearTimeout(toastTimer.current);
+    setToast({ id: Date.now(), text, tone });
+    toastTimer.current = setTimeout(() => setToast(null), 4200);
+  }, []);
+
   const act = useCallback(
-    async (name: string, fn: () => Promise<unknown>) => {
+    async <T,>(
+      name: string,
+      fn: () => Promise<T>,
+      toastFor?: (result: T) => { text: string; tone: ToastTone },
+    ) => {
       setBusy(name);
       try {
-        await fn();
+        const result = await fn();
         invalidate();
+        if (toastFor) {
+          const { text, tone } = toastFor(result);
+          notify(text, tone);
+        }
+        clearTimeout(flashTimer.current);
+        setJustDone(name);
+        flashTimer.current = setTimeout(() => setJustDone(null), 1400);
       } finally {
         setBusy(null);
       }
     },
-    [invalidate],
+    [invalidate, notify],
   );
 
   const playRef = useRef(false);
@@ -170,16 +196,44 @@ export default function App() {
         mode={mode}
         onMode={setMode}
         busy={busy}
+        justDone={justDone}
         playing={playing}
         showZones={showZones}
         onToggleZones={() => setShowZones((v) => !v)}
         onTick={() => act("tick", client.tick)}
         onPlay={() => setPlaying((v) => !v)}
-        onEquity={(w) => act("equity", () => client.setEquity(w))}
-        onBridge={() => act("bridge", client.breakBridge)}
-        onRedteam={(a) => act("redteam", () => client.redteam(a))}
-        onConfidence={(c) => act("confidence", () => client.confidence(c))}
-        onReset={() => act("reset", client.reset)}
+        onEquity={(w) =>
+          act("equity", () => client.setEquity(w), (p) => ({
+            text: `Efficiency ↔ Equity set to ${w.toFixed(2)} — plan re-solved: ${p.counts.rescue} rescue, ${p.counts.verification} verification`,
+            tone: "success",
+          }))
+        }
+        onBridge={() =>
+          act("bridge", client.breakBridge, (r) => ({
+            text: r.broken
+              ? `Bridge collapsed — ${r.remaining} crossing(s) still standing; boats can still reach flooded roads, trucks cannot`
+              : "No further crossings left to break",
+            tone: "warn",
+          }))
+        }
+        onRedteam={(a) =>
+          act("redteam", () => client.redteam(a), (r) => ({
+            text: `Hoax injected — ${r.messages} messages from ${r.distinct_senders} accounts, claiming ${r.claimed_people} people. Watch its trust score.`,
+            tone: "danger",
+          }))
+        }
+        onConfidence={(c) =>
+          act("confidence", () => client.confidence(c), (st) => ({
+            text:
+              st.mode === "decision_support"
+                ? "Confidence dropped below threshold — decision support engaged, 0 assets auto-assigned"
+                : "Confidence restored — autonomous dispatch resumed",
+            tone: st.mode === "decision_support" ? "danger" : "success",
+          }))
+        }
+        onReset={() =>
+          act("reset", client.reset, () => ({ text: "Scenario reset to T+0:00", tone: "default" }))
+        }
       />
 
       {mode === "demo" && (
@@ -200,6 +254,7 @@ export default function App() {
         />
 
         <main className="relative min-w-0">
+          <Toast toast={toast} />
           <MapView
             centre={centre}
             roads={roads.data}

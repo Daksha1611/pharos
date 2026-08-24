@@ -4,9 +4,15 @@
  * The two that carry the pitch sit first: how many raw messages have arrived,
  * and how many distinct demands they collapsed into. That gap is the Kerala
  * number, computed live rather than quoted from a slide.
+ *
+ * Numeric stats count up to their new value instead of snapping - on its own
+ * a small thing, but it is what turns "the number changed" into "the number
+ * is being counted," which is the difference between a live system and a
+ * page that refreshed.
  */
 
 import type { AssetView, Metrics, Plan } from "../api";
+import { useCountUp } from "../hooks/useCountUp";
 
 interface Props {
   metrics: Metrics | undefined;
@@ -23,28 +29,28 @@ export function MetricsStrip({ metrics, plan, assets, events }: Props) {
 
   return (
     <footer className="flex items-stretch gap-3 overflow-x-auto border-t border-gray-200 bg-white px-4 py-2">
-      <Stat
+      <NumberStat
         label="Messages ingested"
-        value={m ? m.messages_ingested.toLocaleString() : "—"}
+        value={m?.messages_ingested}
         sub={m ? `of ${m.messages_total.toLocaleString()} in scenario` : ""}
       />
       <Divider />
-      <Stat
+      <NumberStat
         label="Demand records"
-        value={m ? m.demand_records.toLocaleString() : "—"}
+        value={m?.demand_records}
         sub={m ? `${m.collapse_ratio.toFixed(2)}× collapse` : ""}
         accent="text-blue-700"
       />
-      <Stat
+      <NumberStat
         label="Duplicates removed"
-        value={m ? m.duplicates_collapsed.toLocaleString() : "—"}
+        value={m?.duplicates_collapsed}
         sub="each would have pulled an asset"
         accent="text-indigo-700"
       />
       <Divider />
-      <Stat
+      <NumberStat
         label="People outstanding"
-        value={m ? m.people_outstanding.toLocaleString() : "—"}
+        value={m?.people_outstanding}
         sub={m ? `${m.people_served.toLocaleString()} reached` : ""}
       />
       <Stat
@@ -56,9 +62,9 @@ export function MetricsStrip({ metrics, plan, assets, events }: Props) {
             : "fleet fully available"
         }
       />
-      <Stat
+      <NumberStat
         label="Verification tasks"
-        value={plan ? String(plan.counts.verification) : "—"}
+        value={plan?.counts.verification}
         sub="uncertainty → callback"
         accent="text-slate-700"
       />
@@ -73,11 +79,7 @@ export function MetricsStrip({ metrics, plan, assets, events }: Props) {
         value={m ? `${Math.round(m.solve_ms_last)} ms` : "—"}
         sub={m ? `${Math.round(m.solve_ms_mean)} ms average` : ""}
       />
-      <Stat
-        label="Audit entries"
-        value={m ? m.audit_entries.toLocaleString() : "—"}
-        sub="immutable decision log"
-      />
+      <NumberStat label="Audit entries" value={m?.audit_entries} sub="immutable decision log" />
 
       <div className="ml-auto flex min-w-[220px] flex-col justify-center border-l border-gray-200 pl-3">
         <span className="text-[9px] font-medium uppercase tracking-wide text-slate-500">
@@ -96,6 +98,29 @@ export function MetricsStrip({ metrics, plan, assets, events }: Props) {
         )}
       </div>
     </footer>
+  );
+}
+
+/** A stat whose value is a plain number: counts up on change. */
+function NumberStat({
+  label,
+  value,
+  sub,
+  accent = "text-slate-900",
+}: {
+  label: string;
+  value: number | undefined;
+  sub?: string;
+  accent?: string;
+}) {
+  const animated = useCountUp(value ?? 0);
+  return (
+    <Stat
+      label={label}
+      value={value === undefined ? "—" : animated.toLocaleString()}
+      sub={sub}
+      accent={accent}
+    />
   );
 }
 

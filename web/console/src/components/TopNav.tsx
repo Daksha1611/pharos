@@ -18,6 +18,8 @@ interface Props {
   mode: Mode;
   onMode: (m: Mode) => void;
   busy: string | null;
+  /** Name of the action that most recently completed - triggers its button's flash. */
+  justDone: string | null;
   playing: boolean;
   showZones: boolean;
   onToggleZones: () => void;
@@ -116,12 +118,18 @@ export function TopNav(p: Props) {
           <Btn onClick={p.onToggleZones} tone={p.showZones ? "primary" : "default"}>
             Equity view
           </Btn>
-          <Btn onClick={p.onBridge} busy={p.busy === "bridge"} disabled={!!p.busy}>
+          <Btn
+            onClick={p.onBridge}
+            busy={p.busy === "bridge"}
+            flash={p.justDone === "bridge"}
+            disabled={!!p.busy}
+          >
             Break bridge
           </Btn>
           <Btn
             onClick={() => p.onRedteam("hoax_cluster")}
             busy={p.busy === "redteam"}
+            flash={p.justDone === "redteam"}
             disabled={!!p.busy}
           >
             Inject hoax
@@ -130,11 +138,17 @@ export function TopNav(p: Props) {
             onClick={() => p.onConfidence(degraded ? null : 0.3)}
             tone={degraded ? "danger" : "default"}
             busy={p.busy === "confidence"}
+            flash={p.justDone === "confidence"}
             disabled={!!p.busy}
           >
             {degraded ? "Restore confidence" : "Drop confidence"}
           </Btn>
-          <Btn onClick={p.onReset} busy={p.busy === "reset"} disabled={!!p.busy}>
+          <Btn
+            onClick={p.onReset}
+            busy={p.busy === "reset"}
+            flash={p.justDone === "reset"}
+            disabled={!!p.busy}
+          >
             Reset
           </Btn>
 
@@ -198,12 +212,14 @@ function Btn({
   onClick,
   disabled,
   busy,
+  flash,
   tone = "default",
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   busy?: boolean;
+  flash?: boolean;
   tone?: "default" | "primary" | "danger";
 }) {
   const tones = {
@@ -217,7 +233,8 @@ function Btn({
       onClick={onClick}
       disabled={disabled}
       className={`rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors
-                  disabled:cursor-not-allowed disabled:opacity-50 ${tones[tone]}`}
+                  disabled:cursor-not-allowed disabled:opacity-50 ${tones[tone]}
+                  ${flash ? "animate-button-flash" : ""}`}
     >
       {busy ? "…" : children}
     </button>
