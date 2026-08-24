@@ -27,8 +27,8 @@ OUT = Path("web/console/src/mock/fixtures.json")
 
 # Trimmed so the bundle stays reasonable. The console never shows more than a
 # couple of hundred rows at once anyway.
-DEMAND_LIMIT = 120
-DETAIL_COUNT = 12
+DEMAND_LIMIT = 250
+DETAIL_COUNT = 15
 
 
 def get(path: str):

@@ -158,6 +158,49 @@ function visibleUnserved() {
   return UNSERVED.slice(0, n);
 }
 
+// The scenario floods in two scheduled waves - see
+// kerala_flood_demo.yaml's road_degradation block - at 90 and 180 minutes.
+// Fixtures were captured near the end of the run, after both waves had
+// already fired, so the captured `flooded` list is the FINAL cumulative
+// state. Serving it unchanged from clock zero would show a district that is
+// already 95% flooded before the walkthrough even starts, which guts the
+// "watch it degrade live" beat and makes Break Bridge land on a map that
+// looks pre-broken. Instead the flooded set is revealed in the same two
+// steps the real system actually took: nothing before 90 minutes, roughly
+// half at the 90-minute mark (matching the first wave's smaller
+// disable_fraction), all of it from 180 minutes on.
+const FLOOD_WAVE_1_MIN = 90;
+const FLOOD_WAVE_2_MIN = 180;
+
+function floodRevealFraction(clockMin: number): number {
+  if (clockMin < FLOOD_WAVE_1_MIN) return 0;
+  if (clockMin < FLOOD_WAVE_2_MIN) return 0.5;
+  return 1;
+}
+
+function computeRoads(): Roads {
+  const frac = floodRevealFraction(s.clockMin);
+  const floodedCount = Math.round(FIXTURES.roads.flooded.length * frac);
+  const revealedFlooded = FIXTURES.roads.flooded.slice(0, floodedCount);
+  const notYetFlooded = FIXTURES.roads.flooded.slice(floodedCount);
+
+  const bridges = FIXTURES.roads.bridges.map((b, i) =>
+    i < s.bridgesDown ? { ...b, standing: false } : b,
+  );
+
+  return {
+    ...FIXTURES.roads,
+    open: [...FIXTURES.roads.open, ...notYetFlooded],
+    flooded: revealedFlooded,
+    bridges,
+    counts: {
+      open: FIXTURES.roads.counts.open + notYetFlooded.length,
+      flooded: revealedFlooded.length,
+      disabled: FIXTURES.roads.counts.disabled + s.bridgesDown,
+    },
+  };
+}
+
 function computeMetrics(): Metrics {
   const p = progress(s.clockMin);
   const m = FIXTURES.metrics;
@@ -363,15 +406,7 @@ export function makeClient(mode: Mode) {
     assets: async () => (await wait(), FIXTURES.assets),
     roads: async () => {
       await wait();
-      if (s.bridgesDown === 0) return FIXTURES.roads;
-      const bridges = FIXTURES.roads.bridges.map((b, i) =>
-        i < s.bridgesDown ? { ...b, standing: false } : b,
-      );
-      return {
-        ...FIXTURES.roads,
-        bridges,
-        counts: { ...FIXTURES.roads.counts, disabled: FIXTURES.roads.counts.disabled + s.bridgesDown },
-      };
+      return computeRoads();
     },
     zones: async () => (await wait(), FIXTURES.zones),
     metrics: async () => (await wait(), computeMetrics()),

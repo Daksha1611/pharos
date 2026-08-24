@@ -21,7 +21,7 @@ import { ReallocationCard } from "./components/ReallocationCard";
 import { EMPTY_FILTERS, type Filters, SosFeed } from "./components/SosFeed";
 import { Toast, type ToastData, type ToastTone } from "./components/Toast";
 import { TopNav } from "./components/TopNav";
-import { RESOLUTION_SHORT } from "./theme";
+import { URGENCY } from "./theme";
 
 export default function App() {
   const qc = useQueryClient();
@@ -318,29 +318,46 @@ function Legend({
   roads: { open: number; flooded: number; disabled: number } | undefined;
 }) {
   const pins = (counts?.by_resolution.point ?? 0) + (counts?.by_resolution.building ?? 0);
+  const approx = (counts?.by_resolution.street ?? 0) + (counts?.by_resolution.ward ?? 0);
   return (
-    <div className="pointer-events-none absolute left-4 top-4 z-10 w-56 rounded-lg border border-gray-200 bg-white/95 p-3 text-[11px] shadow-md backdrop-blur">
+    <div className="pointer-events-none absolute left-4 top-4 z-10 w-52 rounded-lg border border-gray-200 bg-white/95 p-3 text-[11px] shadow-md backdrop-blur">
+      {/* Colour is the map's primary code - what it means comes first. */}
       <div className="mb-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-500">
-        Location precision
+        Urgency
       </div>
-      <p className="mb-2 text-[10px] leading-snug text-slate-500">
-        A marker is only as precise as the report behind it.
-      </p>
-      <LRow swatch={<span className="h-2.5 w-2.5 rounded-full bg-slate-700 ring-2 ring-white" />}
-            label={RESOLUTION_SHORT.point + " / " + RESOLUTION_SHORT.building} n={pins} />
-      <LRow swatch={<span className="h-3 w-3 rounded-full border-2 border-slate-500 bg-slate-300/40" />}
-            label={RESOLUTION_SHORT.street + " — area"} n={counts?.by_resolution.street} />
-      <LRow swatch={<span className="h-3.5 w-3.5 rounded-full border border-slate-400 bg-slate-200/40" />}
-            label={RESOLUTION_SHORT.ward + " — zone"} n={counts?.by_resolution.ward} />
-      <LRow swatch={<span className="h-2.5 w-2.5 rounded-sm border border-dashed border-slate-400" />}
-            label="Not located — listed only" n={counts?.unlocatable} />
+      <LRow swatch={<span className={`h-2.5 w-2.5 rounded-full ${URGENCY.critical.dot}`} />}
+            label="Critical" />
+      <LRow swatch={<span className={`h-2.5 w-2.5 rounded-full ${URGENCY.moderate.dot}`} />}
+            label="Moderate" />
+      <LRow swatch={<span className={`h-2.5 w-2.5 rounded-full ${URGENCY.low.dot}`} />}
+            label="Low" />
 
       <div className="mt-2 border-t border-gray-100 pt-1.5">
         <div className="mb-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-500">
-          Road state
+          Marker
+        </div>
+        <LRow swatch={<span className="h-2.5 w-2.5 rounded-full bg-slate-700 ring-2 ring-white" />}
+              label="Known location" n={pins} />
+        <LRow
+          swatch={
+            <span className="relative flex h-4 w-4 items-center justify-center">
+              <span className="absolute h-4 w-4 rounded-full border border-slate-400 bg-slate-300/30" />
+              <span className="h-2 w-2 rounded-full bg-slate-600" />
+            </span>
+          }
+          label="Approximate area"
+          n={approx}
+        />
+        <LRow swatch={<span className="h-2.5 w-2.5 rounded-sm border border-dashed border-slate-400" />}
+              label="Not located — listed only" n={counts?.unlocatable} />
+      </div>
+
+      <div className="mt-2 border-t border-gray-100 pt-1.5">
+        <div className="mb-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+          Road
         </div>
         <LRow swatch={<span className="h-0.5 w-4 bg-slate-300" />} label="Passable" n={roads?.open} />
-        <LRow swatch={<span className="h-0.5 w-4 bg-amber-500" />} label="Flooded — boats only" n={roads?.flooded} />
+        <LRow swatch={<span className="h-0.5 w-4 bg-amber-500" />} label="Flooded (boats only)" n={roads?.flooded} />
         <LRow swatch={<span className="h-0.5 w-4 bg-red-600" />} label="Collapsed" n={roads?.disabled} />
       </div>
     </div>

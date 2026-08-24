@@ -380,13 +380,18 @@ def _assignment_for(session, demand_id: str):
 def road_view(session, bbox: str | None = None) -> dict:
     """Road segments, split by state so the map can colour them.
 
-    Arterials always ship; local roads are thinned, because 2,500 polylines is
-    more than the map needs to read as a road network.
+    A judge does not need to see two thousand local streets to understand
+    "this route is flooded, that one is not" - they need to see the handful
+    of arterials that give the map shape, and every segment that is actually
+    flooded or collapsed, regardless of what class it started as. Everything
+    else is dropped, not thinned: a sparse map that reads in five seconds
+    beats a complete one that reads as noise.
     """
     rg = session.rg
     open_, flooded, disabled = [], [], []
     for u, v, e in rg.G.edges(data=True):
-        if e["road_class"] == "local" and not (e["flooded"] or e["disabled"]) and (u + v) % 3:
+        hazard = e["flooded"] or e["disabled"]
+        if e["road_class"] != "arterial" and not hazard:
             continue
         a, b = rg.node_latlon(u), rg.node_latlon(v)
         seg = [[a[0], a[1]], [b[0], b[1]]]
