@@ -97,7 +97,22 @@ export function MapView(props: Props) {
       m.on("mouseleave", layer, () => (m.getCanvas().style.cursor = ""));
     }
     map.current = m;
+
+    // MapLibre sizes its internal canvas once, at creation, and never checks
+    // again on its own - it only reacts to the browser window's own resize
+    // event. Every layout change that is not a window resize (the
+    // decision-support banner appearing above it, the demand queue growing
+    // taller during Play, a scrollbar showing up) leaves the canvas rendering
+    // at its old dimensions inside a container that has since changed size.
+    // That mismatch is exactly "the map shrinks and gets lost below" - the
+    // container is fine, the canvas inside it is stale. A ResizeObserver on
+    // the container itself catches every one of those cases, not just the
+    // window ones.
+    const observer = new ResizeObserver(() => map.current?.resize());
+    observer.observe(holder.current);
+
     return () => {
+      observer.disconnect();
       m.remove();
       map.current = null;
       ready.current = false;
