@@ -38,6 +38,8 @@ CITIZEN MESSAGES (WhatsApp, SMS, Twitter, Calls, Web Forms, Control Room)
 
 **Sources:** WhatsApp Business API, SMS gateways, Twitter/X scrapers, phone call transcripts, web forms (like keralarescue.in), and manual control-room entries.
 
+**Ingestion Tech:** Messages are received via **FastAPI webhook endpoints** — each channel pushes data to a dedicated HTTP POST route (e.g., `/ingest/whatsapp`, `/ingest/sms`). For production-scale deployment, an **Apache Kafka** (or AWS Kinesis) event stream sits in front of the pipeline to handle burst traffic (40,000+ messages in 6 hours) without dropping messages. Sender identities are immediately hashed with **SHA-256** at the intake boundary — raw phone numbers or usernames never leave the ingestion layer, ensuring privacy compliance.
+
 Each message arrives as a `MessageEnvelope`:
 ```
 MessageEnvelope:
