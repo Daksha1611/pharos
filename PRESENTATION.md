@@ -103,3 +103,52 @@ PHAROS is a complete, closed-loop system that ingests chaotic data, extracts ver
 *   **4. Dynamic Optimization Engine:** Google **OR-Tools (CP-SAT solver)** processing a constraint-programming model to balance capacity, priority, and reserve assets in continuous replan loops.
 *   **5. Dynamic Routing:** NetworkX and OSMnx (OpenStreetMap) utilizing Dijkstra algorithms over a cost matrix that dynamically degrades based on live ingested hazard data (e.g., Synthetic Aperture Radar / drone feeds).
 *   **6. Deployment & Infrastructure:** Microservices built on **FastAPI** (Python 3.11+), deployed on Kubernetes for horizontal scaling, with a **React/Vite/MapLibre GL** frontend communicating via WebSockets.
+
+---
+
+## Slide 12: The Seam — How Each DemandRecord Field Is Computed
+**The DemandRecord is the data contract between sensing and allocation. These five fields don't exist in comparable systems.**
+
+### `quantity_interval` (lower, point, upper)
+*   **Stage:** Triage Extraction → Calibration
+*   **How:** Hierarchical regex matching extracts a raw headcount (e.g., "we are 7 people" → 7, "a household" → 4.6 from Kerala census mean). The calibrated confidence is then used to compute a symmetric interval:
+    *   `lower = point × confidence` (credited value — never over-count a guess)
+    *   `upper = point / confidence` (planned capacity — never show up with too few seats)
+*   **Why it matters:** The solver plans capacity against `upper` but credits value against `lower`. An uncertain "about 20 people" costs more to serve but earns less, so the optimizer naturally prefers confirmed demand.
+
+### `quantity_confidence`
+*   **Stage:** Triage Extraction → Isotonic Regression Calibration
+*   **How:** Each extraction method carries a raw confidence (first-person count: 0.93, number + unit: 0.85, household prior: 0.15). These raw scores are **systematically overconfident**. Isotonic Regression (trained on held-out ground truth) maps them to calibrated probabilities — after calibration, "0.7 confidence" means "correct about 70% of the time."
+*   **Metric:** Validated via Expected Calibration Error (ECE) and Brier Score on reliability curves.
+
+### `trust_score` (0.0 – 1.0)
+*   **Stage:** Trust Scoring (post-deduplication)
+*   **How:** Weighted sum of five components:
+    *   **Corroboration (0.28):** Count of independent senders (not messages). Saturates at 3.
+    *   **Diversity (0.24):** Normalized entropy over channels × sender concentration. 10 WhatsApp posts from 1 group = 1 voice.
+    *   **Freshness (0.22):** Exponential decay with 90-minute half-life from last corroboration. At 3 hours, a lead is worth 25%.
+    *   **Consistency (0.18):** Agreement on need type and headcount across cluster members.
+    *   **Propagation (0.08):** Burst detection — many messages from few accounts in a tight window = amplification signature.
+*   **Floor:** A single uncorroborated report keeps 0.52 — most real emergencies are reported once.
+*   **How the solver uses it:** Trust multiplies demand value. A hoax at 0.15 contributes 15% of its apparent value and loses to any real demand nearby. **Suppressed, never deleted.**
+
+### `geo_resolution_level` (point | building | street | ward | unknown)
+*   **Stage:** Geo-Resolution Cascade
+*   **How:** A six-step ordered cascade — stops at the first hit:
+    1. Channel-attached GPS coordinates → `point` (confidence 0.95)
+    2. Coordinates parsed from text via regex → `point` (0.92)
+    3. Nominatim geocoder (self-hosted) → `building` (0.80)
+    4. Local landmark gazetteer (900 landmarks, token-inverted index) → `street` (0.65)
+    5. Sender cell region + generic place word → `ward` (0.35)
+    6. Nothing resolved → `unknown` (0.0)
+*   **Key rule:** Resolution is never upgraded. A `ward`-level demand renders as a hex zone, never as a pin. A pin is a promise.
+
+### `duplicate_collapse_count`
+*   **Stage:** Deduplication Clustering
+*   **How:** After HDBSCAN/union-find clustering, this field records how many raw messages were merged into this single demand record. Merging requires passing all four hard gates simultaneously:
+    1. Spatial radius (180m base + each message's positional uncertainty, max 3km)
+    2. Need type agreement
+    3. Headcount ratio within 1.6×
+    4. Unlocatable messages (resolved to district centroid) are never merged
+*   **Anti-chaining:** Every member must resemble the cluster centroid, not just a neighbour. Prevents transitive drift.
+*   **Why it matters:** A demand with `collapse_count = 12` means 12 independent reports confirmed the same event — this feeds directly into corroboration (trust) and tells the operator the signal is strong.
