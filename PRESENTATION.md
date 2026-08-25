@@ -87,3 +87,19 @@ PHAROS is a complete, closed-loop system that ingests chaotic data, extracts ver
 *   **Without PHAROS:** Duplicates overwhelm dispatchers, fake news steals boats, and isolated communities are ignored.
 *   **With PHAROS:** Verified signal, dynamic reallocation, confirmed resolutions, and transparent equity. 
 *   **The Result:** Maximizing lives saved per physical asset deployed.
+
+---
+
+## Slide 11: Technical Architecture & System Flow (Full Scale)
+**The models and infrastructure powering the production environment.**
+*   **1. High-Throughput Intake:** Apache Kafka / AWS Kinesis for real-time event streaming from disparate sources (WhatsApp Business API, X/Twitter scrapers, webhooks).
+*   **2. Sensing & NLP Pipeline:**
+    *   **Text Normalization:** SymSpell-style algorithms for offline, ultra-fast typo repair.
+    *   **Extraction:** Custom NER (Named Entity Recognition) and Regex cascades for extracting Need Type, Headcounts, and Vulnerability flags across code-mixed languages.
+    *   **Calibration:** Scikit-learn (Isotonic Regression) to map raw extraction confidence to true probability.
+*   **3. Geo-Resolution & Clustering:** 
+    *   **Spatial Indexing:** Uber's **H3** Hexagonal hierarchical spatial index.
+    *   **Embeddings & Deduplication:** Sentence-Transformers (**LaBSE**) for cross-lingual semantic embeddings, **FAISS** for fast nearest-neighbor search, and **HDBSCAN** for density-based clustering without predefined cluster counts.
+*   **4. Dynamic Optimization Engine:** Google **OR-Tools (CP-SAT solver)** processing a constraint-programming model to balance capacity, priority, and reserve assets in continuous replan loops.
+*   **5. Dynamic Routing:** NetworkX and OSMnx (OpenStreetMap) utilizing Dijkstra algorithms over a cost matrix that dynamically degrades based on live ingested hazard data (e.g., Synthetic Aperture Radar / drone feeds).
+*   **6. Deployment & Infrastructure:** Microservices built on **FastAPI** (Python 3.11+), deployed on Kubernetes for horizontal scaling, with a **React/Vite/MapLibre GL** frontend communicating via WebSockets.
