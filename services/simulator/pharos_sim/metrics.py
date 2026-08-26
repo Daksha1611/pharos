@@ -156,8 +156,6 @@ def coverage_within_window(served: list[ServedRecord], truth_index: dict) -> flo
         t = truth_index.get(s.truth_id or "")
         if t is None or t.is_hoax or s.kind != "rescue" or s.is_duplicate_visit:
             continue
-        onset_min = s.dispatched_at_min  # dispatch clock is already relative
-        del onset_min
         window = urgency_window(t.need, t.medical_urgency)
         if s.arrived_at_min - _onset_minutes(t, truth_index) <= window:
             in_time += min(s.people_committed, t.people)

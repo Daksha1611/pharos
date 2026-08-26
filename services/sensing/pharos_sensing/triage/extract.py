@@ -19,7 +19,7 @@ Nothing downstream should read a raw score.
 
 from __future__ import annotations
 
-import re
+import re as _re
 from dataclasses import dataclass, field
 
 from pharos_core import MedicalUrgency, NeedType
@@ -82,6 +82,14 @@ NEED_CUES: dict[NeedType, list[tuple[str, float]]] = {
     ],
 }
 
+# Pre-compiled at import time so the hot path (one call per message) never
+# pays the compile cost. Python's regex cache caps at 512 entries; explicit
+# compilation is the only guarantee against silent evictions.
+_COMPILED_NEED_CUES: dict = {
+    nt: [(_re.compile(pat), w) for pat, w in cues]
+    for nt, cues in NEED_CUES.items()
+}
+
 # --------------------------------------------------------------------------
 # headcount
 # --------------------------------------------------------------------------
@@ -102,11 +110,11 @@ HOUSEHOLD_UNITS = r"(?:famil(?:y|ies)|households?|houses?|homes?|parivar|ghar)"
 MEAN_HOUSEHOLD_SIZE = 4.6  # Kerala census average, rounded
 
 _NUM = r"(\d{1,4})"
-_PAT_PEOPLE_AFTER = re.compile(rf"{_NUM}\s+(?:\w+\s+){{0,2}}?{PERSON_UNITS}\b")
-_PAT_PEOPLE_BEFORE = re.compile(rf"\b{PERSON_UNITS}\W{{0,4}}{_NUM}\b")
-_PAT_HOUSEHOLD = re.compile(rf"{_NUM}\s+(?:\w+\s+){{0,2}}?{HOUSEHOLD_UNITS}\b")
-_PAT_WE_ARE = re.compile(rf"\b(?:we are|hum|ham)\s+{_NUM}\b")
-_PAT_BARE = re.compile(rf"\b{_NUM}\b")
+_PAT_PEOPLE_AFTER = _re.compile(rf"{_NUM}\s+(?:\w+\s+){{0,2}}?{PERSON_UNITS}\b")
+_PAT_PEOPLE_BEFORE = _re.compile(rf"\b{PERSON_UNITS}\W{{0,4}}{_NUM}\b")
+_PAT_HOUSEHOLD = _re.compile(rf"{_NUM}\s+(?:\w+\s+){{0,2}}?{HOUSEHOLD_UNITS}\b")
+_PAT_WE_ARE = _re.compile(rf"\b(?:we are|hum|ham)\s+{_NUM}\b")
+_PAT_BARE = _re.compile(rf"\b{_NUM}\b")
 
 # --------------------------------------------------------------------------
 # vulnerability and urgency
@@ -119,11 +127,15 @@ VULN_CUES = {
     "disabled": r"\b(disabled|cannot walk|chal nahi sakta|wheelchair|handicapped)\b",
     "injured": r"\b(injured|ghayal|wounded|bleeding|fracture|broken (leg|arm|bone))\b",
 }
+_COMPILED_VULN_CUES: dict = {flag: _re.compile(pat) for flag, pat in VULN_CUES.items()}
 
 URGENCY_CUES = [
     (MedicalUrgency.CRITICAL, r"\b(unconscious|behosh|bleeding heavily|critical|cardiac|not breathing|dialysis|oxygen)\b", 3.0),
     (MedicalUrgency.MODERATE, r"\b(injured|ghayal|fracture|insulin|missed two sessions|high fever|severe)\b", 2.0),
     (MedicalUrgency.MILD, r"\b(sick|bimar|fever|unwell|weak|medicine|dawai)\b", 1.0),
+]
+_COMPILED_URGENCY_CUES = [
+    (level, _re.compile(pat), w) for level, pat, w in URGENCY_CUES
 ]
 
 
@@ -170,8 +182,8 @@ def extract(text: str) -> Extraction:
 
 def _need_type(t: str) -> tuple[NeedType, float, dict]:
     scores: dict[NeedType, float] = {}
-    for nt, cues in NEED_CUES.items():
-        s = sum(w for pat, w in cues if re.search(pat, t))
+    for nt, cues in _COMPILED_NEED_CUES.items():
+        s = sum(w for pat, w in cues if pat.search(t))
         if s:
             scores[nt] = s
 
@@ -227,7 +239,7 @@ def _spell_numbers(t: str) -> str:
     def sub(m):
         return str(NUMBER_WORDS[m.group(0)])
 
-    return re.sub(rf"\b({'|'.join(NUMBER_WORDS)})\b", sub, t)
+    return _re.sub(rf"\b({'|'.join(NUMBER_WORDS)})\b", sub, t)
 
 
 def _clamp(n: int) -> int:
@@ -235,7 +247,7 @@ def _clamp(n: int) -> int:
 
 
 def _vulnerabilities(t: str) -> tuple[list[str], float]:
-    hits = [flag for flag, pat in VULN_CUES.items() if re.search(pat, t)]
+    hits = [flag for flag, pat in _COMPILED_VULN_CUES.items() if pat.search(t)]
     if not hits:
         # Absence of evidence. Most messages simply do not mention it, so a
         # negative here is weak, and the confidence says so.
@@ -244,8 +256,8 @@ def _vulnerabilities(t: str) -> tuple[list[str], float]:
 
 
 def _urgency(t: str, need: NeedType) -> tuple[MedicalUrgency, float]:
-    for level, pat, weight in URGENCY_CUES:
-        if re.search(pat, t):
+    for level, pat, weight in _COMPILED_URGENCY_CUES:
+        if pat.search(t):
             return level, min(0.95, 0.52 + 0.13 * weight)
     if need is NeedType.MEDICAL:
         return MedicalUrgency.MILD, 0.42

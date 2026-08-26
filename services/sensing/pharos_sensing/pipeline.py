@@ -15,6 +15,7 @@ of the ablation table.
 
 from __future__ import annotations
 
+import bisect
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -94,10 +95,14 @@ class SensingResult:
     _arrival_order: list[list[int]] | None = field(default=None, repr=False)
 
     def cluster_of(self, message_id: str) -> int | None:
-        for ci, members in enumerate(self.clusters):
-            if any(self.processed[i].envelope.message_id == message_id for i in members):
-                return ci
-        return None
+        # Reverse index built once on first call: O(N) build, O(1) lookup.
+        if not hasattr(self, "_msg_to_cluster"):
+            self._msg_to_cluster: dict[str, int] = {
+                self.processed[i].envelope.message_id: ci
+                for ci, members in enumerate(self.clusters)
+                for i in members
+            }
+        return self._msg_to_cluster.get(message_id)
 
     def snapshot(self, now: datetime) -> list[DemandRecord]:
         """Demand state as it stood at `now`.
@@ -158,14 +163,8 @@ def _visible_count(members_sorted, processed, now) -> int:
     Members are pre-sorted by arrival, so this is a bisect over their
     timestamps rather than a scan.
     """
-    lo, hi = 0, len(members_sorted)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if processed[members_sorted[mid]].envelope.received_at <= now:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
+    timestamps = [processed[i].envelope.received_at for i in members_sorted]
+    return bisect.bisect_right(timestamps, now)
 
 
 class SensingPipeline:

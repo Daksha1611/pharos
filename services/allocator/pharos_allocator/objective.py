@@ -7,6 +7,7 @@ rather than asserted.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from pharos_core import MedicalUrgency, NeedType
@@ -91,7 +92,9 @@ class SolverConfig:
     # --- performance ------------------------------------------------------
     time_limit_s: float = 10.0
     top_k_assets: int = 10
-    workers: int = 8
+    # Default to the number of physical CPUs so the solver uses all available
+    # cores without over-subscribing on small laptops.
+    workers: int = os.cpu_count() or 4
 
     # How many demands enter the model. An operator's screen shows a ranked
     # queue, not every open record, and the solver works the same way: the
